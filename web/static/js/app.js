@@ -555,11 +555,15 @@ delete_history: true,
           <div class="card">
             <div class="card-title flex items-center justify-between">
               <span>回测配置</span>
-              <div>
+              <div class="flex gap-1">
                 <input type="file" id="bt-import-file" accept=".json" style="display:none" onchange="App.importStrategy(this, 'bt-strategy')">
                 <button class="btn btn-sm btn-ghost" onclick="document.getElementById('bt-import-file').click()" style="padding:2px 8px;font-size:12px" title="导入外部或导出的策略 JSON 文件">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                   导入策略
+                </button>
+                <button class="btn btn-sm btn-ghost" onclick="App.openPortfolioModal('bt-strategy')" style="padding:2px 8px;font-size:12px" title="将多个单因子策略融合成多因子组合策略">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:2px"><path d="M12 20v-6M6 20V10M18 20V4"/></svg>
+                  构建组合
                 </button>
               </div>
             </div>
@@ -735,11 +739,15 @@ delete_history: true,
         <div class="card">
           <div class="card-title flex items-center justify-between">
             <span>分析配置</span>
-            <div>
+            <div class="flex gap-1">
               <input type="file" id="an-import-file" accept=".json" style="display:none" onchange="App.importStrategy(this, 'an-strategy')">
               <button class="btn btn-sm btn-ghost" onclick="document.getElementById('an-import-file').click()" style="padding:2px 8px;font-size:12px" title="导入外部或导出的策略 JSON 文件">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 导入策略
+              </button>
+              <button class="btn btn-sm btn-ghost" onclick="App.openPortfolioModal('an-strategy')" style="padding:2px 8px;font-size:12px" title="将多个单因子策略融合成多因子组合策略">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:2px"><path d="M12 20v-6M6 20V10M18 20V4"/></svg>
+                构建组合
               </button>
             </div>
           </div>
@@ -931,11 +939,15 @@ delete_history: true,
           <div class="card">
             <div class="card-title flex items-center justify-between">
               <span>交易配置</span>
-              <div>
+              <div class="flex gap-1">
                 <input type="file" id="tr-import-file" accept=".json" style="display:none" onchange="App.importStrategy(this, 'tr-strategy')">
                 <button class="btn btn-sm btn-ghost" onclick="document.getElementById('tr-import-file').click()" style="padding:2px 8px;font-size:12px" title="导入外部或导出的策略 JSON 文件">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                   导入策略
+                </button>
+                <button class="btn btn-sm btn-ghost" onclick="App.openPortfolioModal('tr-strategy')" style="padding:2px 8px;font-size:12px" title="将多个单因子策略融合成多因子组合策略">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:2px"><path d="M12 20v-6M6 20V10M18 20V4"/></svg>
+                  构建组合
                 </button>
               </div>
             </div>
@@ -1136,6 +1148,78 @@ delete_history: true,
     }
   },
 
+  async openPortfolioModal(targetSelectId = null) {
+    this._targetPortfolioSelectId = targetSelectId;
+    const modal = document.getElementById('portfolio-modal');
+    const listEl = document.getElementById('pf-strategy-list');
+    modal.style.display = 'flex';
+    listEl.innerHTML = '<div class="loading-overlay"><span class="spinner"></span> 加载可用策略中...</div>';
+    try {
+      const res = await fetchJSON(`${API}/training/strategies`);
+      const strats = (res.strategies || []).filter(s => !s.is_portfolio);
+      if (strats.length < 2) {
+        listEl.innerHTML = '<div class="alert alert-warning" style="margin:0">需至少有 2 个单因子策略才能构建多因子组合。<br>请先训练模型或导入更多策略文件。</div>';
+        return;
+      }
+      listEl.innerHTML = strats.map(s => `
+        <label class="flex items-center gap-2" style="padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="checkbox" name="pf-sub-strat" value="${s.file_path}">
+          <div style="flex:1">
+            <div class="text-sm font-mono">${s.file_name} (${s.symbol || '-'})</div>
+            <div class="text-xs text-muted">评分: ${fmtNum(s.best_score, 3)} | ${s.formula_decoded || '-'}</div>
+          </div>
+        </label>
+      `).join('');
+    } catch (e) {
+      listEl.innerHTML = `<div class="text-danger">加载策略列表失败: ${e.message}</div>`;
+    }
+  },
+
+  closePortfolioModal() {
+    document.getElementById('portfolio-modal').style.display = 'none';
+  },
+
+  async submitPortfolioStrategy() {
+    const name = document.getElementById('pf-name').value.trim();
+    if (!name) { toast('请输入组合策略名称', 'error'); return; }
+    const checked = Array.from(document.querySelectorAll('input[name="pf-sub-strat"]:checked')).map(el => el.value);
+    if (checked.length < 2) { toast('请至少勾选 2 个子策略进行融合', 'error'); return; }
+    const weightMethod = document.getElementById('pf-weight-method').value;
+
+    try {
+      const res = await fetchJSON(`${API}/portfolio/create`, {
+        method: 'POST',
+        body: JSON.stringify({
+          portfolio_name: name,
+          strategy_paths: checked,
+          weight_method: weightMethod,
+        }),
+      });
+
+      toast(res.msg || '组合策略创建成功', 'success');
+      this.closePortfolioModal();
+
+      // 刷新界面上的策略选择框并自动选中新构建的组合策略
+      const data = await fetchJSON(`${API}/training/strategies`);
+      const newStrats = data.strategies || [];
+
+      ['tr-strategy', 'bt-strategy', 'an-strategy'].forEach(id => {
+        const select = document.getElementById(id);
+        if (select) {
+          select.innerHTML = newStrats.map(s =>
+            `<option value="${s.file_path}">${s.is_portfolio ? '📈 [组合] ' : ''}${s.file_name} (${s.symbol || '-'})</option>`
+          ).join('') || '<option value="">无策略</option>';
+
+          if (res.portfolio && res.portfolio.file_path) {
+            select.value = res.portfolio.file_path;
+          }
+        }
+      });
+    } catch (e) {
+      toast(`创建组合策略失败: ${e.message}`, 'error');
+    }
+  },
+
   async executeTrade() {
     const strategy = document.getElementById('tr-strategy').value;
     if (!strategy) { toast('请选择策略', 'error'); return; }
@@ -1225,6 +1309,20 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
     if (!area) return;
     try {
       const r = await fetchJSON(`${API}/trading/runtime`);
+      if (r.ws_status) {
+        const badge = document.getElementById('ws-badge');
+        if (badge) {
+          if (r.ws_status.connected) {
+            badge.style.background = '#10b981';
+            badge.style.color = '#fff';
+            badge.textContent = 'WS 实时推送';
+          } else {
+            badge.style.background = '#f59e0b';
+            badge.style.color = '#fff';
+            badge.textContent = 'WS 备用(REST)';
+          }
+        }
+      }
       const acct = r.account;
       const acctHtml = acct ? `
         <div class="grid-4">

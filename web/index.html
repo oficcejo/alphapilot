@@ -46,6 +46,7 @@
     </nav>
     <div class="sidebar-footer">
       <div>交易模式: <span id="mode-badge" class="mode-badge paper">PAPER</span></div>
+      <div style="margin-top:6px;font-size:11px">推送状态: <span id="ws-badge" class="mode-badge" style="background:#334155;color:#94a3b8">WS 连接中...</span></div>
       <div style="margin-top:8px;font-size:10px;opacity:0.6">免责声明：请自行承担交易风险</div>
     </div>
   </aside>
@@ -110,9 +111,40 @@
   </main>
 </div>
 
+<!-- ── Portfolio Strategy Modal ──────────────── -->
+<div id="portfolio-modal" class="modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center">
+  <div class="card" style="width:550px;max-width:90%;max-height:85vh;overflow-y:auto;background:var(--bg-secondary);border:1px solid var(--border)">
+    <div class="card-title flex items-center justify-between">
+      <span>📈 构建多因子组合策略</span>
+      <button class="btn btn-sm btn-ghost" onclick="App.closePortfolioModal()">✕</button>
+    </div>
+    <div class="form-group mt-3">
+      <label class="form-label">组合策略名称</label>
+      <input class="form-input" id="pf-name" placeholder="如 比特币动量均值回归组合">
+    </div>
+    <div class="form-group">
+      <label class="form-label">权重计算方式</label>
+      <select class="form-select" id="pf-weight-method">
+        <option value="score_weighted" selected>按评分加权 (Score-Weighted)</option>
+        <option value="equal">等权重 (Equal-Weight)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">选择融合子策略（勾选 2 个或以上）</label>
+      <div id="pf-strategy-list" style="max-height:200px;overflow-y:auto;background:var(--bg-primary);padding:10px;border-radius:6px;border:1px solid var(--border)">
+        <div class="text-muted text-center">加载中...</div>
+      </div>
+    </div>
+    <div class="flex gap-2 mt-4">
+      <button class="btn btn-success flex-1" onclick="App.submitPortfolioStrategy()">生成组合策略</button>
+      <button class="btn btn-ghost" onclick="App.closePortfolioModal()">取消</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Toast Container ──────────────────────── -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="/static/js/app.js?v=20260727_import"></script>
+<script src="/static/js/app.js?v=20260727_portfolio"></script>
 </body>
 </html>

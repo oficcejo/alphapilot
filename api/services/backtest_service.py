@@ -49,12 +49,9 @@ class BacktestService:
         Returns:
             回测结果（含资金曲线、绩效指标、交易明细）
         """
-        # 1. 加载策略
+        # 1. 加载策略（支持单因子策略与组合策略）
         strategy = load_strategy(strategy_path)
-        formula = strategy.get("formula")
-        if not formula:
-            raise ValueError("策略文件中无公式")
-        formula_decoded = strategy.get("formula_decoded", decode_formula(formula))
+        formula_decoded = strategy.get("formula_decoded", "")
 
         # 2. 加载数据
         raw_dict = load_parquet_to_raw_dict(data_file)
@@ -65,11 +62,11 @@ class BacktestService:
         N, T = close.shape
         periods_per_year = infer_periods_per_year(time_arr, default=6240)
 
-        # 3. 执行公式得到因子
+        # 3. 求值得到因子（兼容单策略与多因子组合）
         with torch.no_grad():
-            factor = self.vm.execute(formula, feat)
+            factor = eval_strategy_factor(strategy, self.vm, feat)
         if factor is None:
-            raise ValueError("公式执行失败（无效公式）")
+            raise ValueError("因子计算失败（无效策略或求值异常）")
 
         # 4. 计算仓位信号
         position = compute_target_positions_stateless(factor)  # [N, T]

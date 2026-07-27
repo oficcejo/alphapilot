@@ -62,12 +62,9 @@ class AnalysisService:
         Returns:
             分析结果（含最新信号、仓位建议、因子值序列）
         """
-        # 1. 加载策略
+        # 1. 加载策略（支持单因子策略与组合策略）
         strategy = load_strategy(strategy_path)
-        formula = strategy.get("formula")
-        if not formula:
-            raise ValueError("策略文件中无公式")
-        formula_decoded = strategy.get("formula_decoded", decode_formula(formula))
+        formula_decoded = strategy.get("formula_decoded", "")
 
         # 2. 获取 OKX K 线
         client = get_public_client()
@@ -80,11 +77,11 @@ class AnalysisService:
         # 3. 计算特征
         feat = MT5FeatureEngineer.compute_features(raw_dict)
 
-        # 4. 执行公式
+        # 4. 执行因子求值（兼容单策略与多因子组合）
         with torch.no_grad():
-            factor = self.vm.execute(formula, feat)
+            factor = eval_strategy_factor(strategy, self.vm, feat)
         if factor is None:
-            raise ValueError("公式执行失败")
+            raise ValueError("因子计算失败（无效策略或求值异常）")
 
         # 5. 计算仓位
         position = compute_target_positions_stateless(factor)
@@ -156,18 +153,15 @@ class AnalysisService:
     ) -> dict:
         """从本地 Parquet 分析信号（MT5 / 本地数据模式）。"""
         strategy = load_strategy(strategy_path)
-        formula = strategy.get("formula")
-        if not formula:
-            raise ValueError("策略文件中无公式")
-        formula_decoded = strategy.get("formula_decoded", decode_formula(formula))
+        formula_decoded = strategy.get("formula_decoded", "")
 
         raw_dict = load_parquet_to_raw_dict(data_file)
         feat = MT5FeatureEngineer.compute_features(raw_dict)
 
         with torch.no_grad():
-            factor = self.vm.execute(formula, feat)
+            factor = eval_strategy_factor(strategy, self.vm, feat)
         if factor is None:
-            raise ValueError("公式执行失败")
+            raise ValueError("因子计算失败（无效策略或求值异常）")
 
         position = compute_target_positions_stateless(factor)
 

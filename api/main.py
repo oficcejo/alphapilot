@@ -26,12 +26,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from contextlib import asynccontextmanager
 
 from config import Config
-from api.routers import data, training, backtest, analysis, trading
+from api.routers import data, training, backtest, analysis, trading, portfolio
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时打印配置信息。"""
+    """应用生命周期：启动时打印配置信息与启动 WebSocket。"""
     print("=" * 60)
     print("  OKX AlphaPilot | 量化研究与交易中枢")
     print("=" * 60)
@@ -44,6 +44,16 @@ async def lifespan(app: FastAPI):
     print(f"  检查点目录   : {Config.CHECKPOINT_DIR}")
     print(f"  Web 服务     : http://{Config.WEB_HOST}:{Config.WEB_PORT}")
     print("=" * 60)
+    
+    # 启动后台 WebSocket 监听循环
+    try:
+        from data_pipeline.okx_ws_client import okx_ws_client
+        import asyncio
+        asyncio.create_task(okx_ws_client.start())
+        print("  WebSocket 服 : 启动中")
+    except Exception as e:
+        print(f"  WebSocket 服 : 未启动 ({e})")
+
     yield
 
 
@@ -71,6 +81,7 @@ app.include_router(training.router)
 app.include_router(backtest.router)
 app.include_router(analysis.router)
 app.include_router(trading.router)
+app.include_router(portfolio.router)
 
 
 # ── 系统状态 ────────────────────────────────────────────────────────────────

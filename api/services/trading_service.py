@@ -27,7 +27,8 @@ from model.vm import StackVM
 from model.features import MT5FeatureEngineer
 from strategy_manager.signal import compute_target_positions_stateless, signal_to_action
 from data_pipeline.okx_client import OKXClient, get_public_client, get_private_client
-from api.services.strategy_service import load_strategy, decode_formula
+from data_pipeline.okx_ws_client import okx_ws_client
+from api.services.strategy_service import load_strategy, decode_formula, eval_strategy_factor
 
 
 class AuditLog:
@@ -93,6 +94,7 @@ class TradingService:
             "api_configured": bool(Config.OKX_API_KEY and Config.OKX_API_SECRET and Config.OKX_API_PASSPHRASE),
             "simulated": Config.OKX_API_SIMULATED,
             "active_positions": list(self._position_cache.values()),
+            "ws_status": okx_ws_client.get_status(),
             "risk_config": {
                 "max_leverage": Config.MAX_LEVERAGE,
                 "max_daily_loss_pct": Config.MAX_DAILY_LOSS_PCT,
@@ -109,6 +111,7 @@ class TradingService:
         status = {
             "mode": Config.TRADING_MODE,
             "is_live": Config.is_live(),
+            "ws_status": okx_ws_client.get_status(),
             "account": None,
             "account_error": None,
             "positions": [],
@@ -423,12 +426,9 @@ class TradingService:
         # 风控：杠杆上限
         leverage = min(leverage, Config.MAX_LEVERAGE)
 
-        # 1. 加载策略
+        # 1. 加载策略（支持单因子策略与组合策略）
         strategy = load_strategy(strategy_path)
-        formula = strategy.get("formula")
-        if not formula:
-            raise ValueError("策略文件中无公式")
-        formula_decoded = strategy.get("formula_decoded", decode_formula(formula))
+        formula_decoded = strategy.get("formula_decoded", "")
 
         # 2. 获取行情
         client = get_public_client()
@@ -452,12 +452,12 @@ class TradingService:
             "time": time_arr,
         }
 
-        # 3. 计算信号
+        # 3. 计算信号（兼容单策略与多因子组合）
         feat = MT5FeatureEngineer.compute_features(raw_dict)
         with torch.no_grad():
-            factor = self.vm.execute(formula, feat)
+            factor = eval_strategy_factor(strategy, self.vm, feat)
         if factor is None:
-            raise ValueError("公式执行失败")
+            raise ValueError("因子计算失败（无效策略或求值异常）")
 
         position_signal = compute_target_positions_stateless(factor)
         signal = float(position_signal[0, -1].item())
