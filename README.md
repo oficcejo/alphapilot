@@ -113,6 +113,7 @@ okx-alpha-pilot/
 │
 ├── data_pipeline/                  # 数据管道
 │   ├── okx_client.py               #   OKX v5 REST 客户端（公有+私有接口）
+│   ├── okx_ws_client.py            #   OKX v5 WebSocket 实时订阅客户端
 │   ├── parquet_manager.py          #   Parquet 读写管理
 │   ├── timeframe_utils.py          #   K线周期工具
 │   └── downloader.py               #   批量数据下载
@@ -124,13 +125,14 @@ okx-alpha-pilot/
 │   │   ├── training.py             #     模型训练（启动/状态/曲线/断点续训）
 │   │   ├── backtest.py             #     策略回测（资金曲线/绩效指标）
 │   │   ├── analysis.py             #     实时分析（OKX/MT5/TradingView 信号）
-│   │   └── trading.py              #     实盘交易（paper/live + 审计日志）
+│   │   ├── trading.py              #     实盘交易（paper/live + 审计日志）
+│   │   └── portfolio.py            #     组合策略（多因子融合与构建）
 │   └── services/                   #   服务层
 │       ├── training_service.py     #     训练编排（后台线程 + 实时进度）
 │       ├── backtest_service.py     #     回测执行（PnL/Sortino/Calmar/回撤）
 │       ├── analysis_service.py     #     信号计算（实时K线 → 因子 → 仓位）
 │       ├── trading_service.py      #     交易执行（风控 + 审计日志）
-│       └── strategy_service.py     #     策略加载/解码/保存
+│       └── strategy_service.py     #     策略加载/解码/保存与多因子组合
 │
 ├── web/                            # 前端 SPA
 │   ├── index.html                  #   6 页面单页应用
