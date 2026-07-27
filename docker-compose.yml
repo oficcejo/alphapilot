@@ -1,0 +1,55 @@
+# ── docker-compose.yml — OKX AlphaPilot ─────────────────────────────
+# 用法：
+#   1. 复制 .env.example 为 .env 并填写 OKX 凭证
+#   2. docker compose up -d --build
+#   3. 访问 http://localhost:8009
+# ────────────────────────────────────────────────────────────────────
+
+services:
+  alphapilot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: okx-alpha-pilot:latest
+    container_name: okx-alpha-pilot
+    restart: unless-stopped
+
+    # 端口映射：宿主端口:容器端口
+    ports:
+      - "8009:8009"
+
+    # 从 .env 文件加载环境变量
+    env_file:
+      - .env
+
+    # 数据卷持久化（防止容器重建后丢失训练数据/策略/检查点）
+    volumes:
+      - ./data:/app/data           # Parquet 数据
+      - ./strategies:/app/strategies  # 策略 JSON
+      - ./checkpoints:/app/checkpoints  # 训练检查点
+      - ./trading_audit.jsonl:/app/trading_audit.jsonl  # 交易审计日志
+      - ./training_history.json:/app/training_history.json  # 训练历史
+
+    # 资源限制（训练可能消耗较多内存）
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8009/api/system', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+    # 日志配置
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

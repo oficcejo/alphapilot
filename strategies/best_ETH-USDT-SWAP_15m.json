@@ -1,0 +1,18 @@
+{
+  "vocab_version": "v9217a2c0d91a",
+  "symbol": "ETH-USDT-SWAP",
+  "timeframe": "15m",
+  "data_file": "/app/data/ETH-USDT-SWAP_15m.parquet",
+  "formula": [
+    0,
+    91,
+    58,
+    65,
+    125,
+    0,
+    65,
+    125
+  ],
+  "best_score": 17.89889144897461,
+  "formula_decoded": "RET -> WMA -> ROLL_KURT_20 -> ADD -> TANH_SQUASH -> RET -> ADD -> TANH_SQUASH"
+}

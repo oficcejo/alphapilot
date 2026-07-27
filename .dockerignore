@@ -1,0 +1,59 @@
+# ── .dockerignore — 减少 Docker 构建上下文体积 ─────────────────────
+# 与 .gitignore 类似，排除不需要进入镜像的文件
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+.envrc
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Docker 自身（避免循环）
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# 日志和临时文件
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+
+# 大文件目录（通过 volume 挂载，不打入镜像）
+# 注意：data/ strategies/ checkpoints/ 通过 docker-compose volumes 挂载，
+# 这里排除避免构建时拷贝大量数据进镜像
+data/*.parquet
+data/*.json
+checkpoints/*.pt
+training_history*.json
+trading_audit.jsonl
+
+# 文档
+*.md
+!README.md
+
+# 诊断/测试临时文件
+_diag_*.py
+_check_*.py
+test_*.py

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>OKX AlphaPilot | 量化研究与交易中枢</title>
+  <link rel="stylesheet" href="/static/css/style.css?v=20260727_import">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="app-layout">
+  <!-- ── Sidebar ─────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">⚡ AlphaPilot</div>
+      <div class="subtitle">OKX 量化研究与交易中枢</div>
+    </div>
+    <nav class="nav-menu">
+      <a class="nav-item active" data-page="dashboard" onclick="App.navigate('dashboard')">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0h6"/></svg>
+        总览
+      </a>
+      <a class="nav-item" data-page="training" onclick="App.navigate('training')">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+        模型训练
+      </a>
+      <a class="nav-item" data-page="backtest" onclick="App.navigate('backtest')">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        策略回测
+      </a>
+      <a class="nav-item" data-page="analysis" onclick="App.navigate('analysis')">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+        实时分析
+      </a>
+      <a class="nav-item" data-page="trading" onclick="App.navigate('trading')">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 12l4-4 4 4 6-6"/></svg>
+        实盘交易
+      </a>
+      <a class="nav-item" data-page="data" onclick="App.navigate('data')">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
+        数据管理
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <div>交易模式: <span id="mode-badge" class="mode-badge paper">PAPER</span></div>
+      <div style="margin-top:8px;font-size:10px;opacity:0.6">免责声明：请自行承担交易风险</div>
+    </div>
+  </aside>
+
+  <!-- ── Main Content ────────────────────────── -->
+  <main class="main-content">
+
+    <!-- ════════ Dashboard ════════ -->
+    <div id="page-dashboard" class="page active">
+      <div class="page-header">
+        <div class="page-title">总览</div>
+        <div class="page-desc">系统状态、策略概览和快速操作</div>
+      </div>
+      <div id="dashboard-content"><div class="loading-overlay"><span class="spinner"></span> 加载中...</div></div>
+    </div>
+
+    <!-- ════════ Training ════════ -->
+    <div id="page-training" class="page">
+      <div class="page-header">
+        <div class="page-title">模型训练</div>
+        <div class="page-desc">选择 Parquet 数据，启动 Alpha 因子挖掘训练</div>
+      </div>
+      <div id="training-content"></div>
+    </div>
+
+    <!-- ════════ Backtest ════════ -->
+    <div id="page-backtest" class="page">
+      <div class="page-header">
+        <div class="page-title">策略回测</div>
+        <div class="page-desc">选择策略和数据，设置手续费和滑点，查看资金曲线和绩效指标</div>
+      </div>
+      <div id="backtest-content"></div>
+    </div>
+
+    <!-- ════════ Analysis ════════ -->
+    <div id="page-analysis" class="page">
+      <div class="page-header">
+        <div class="page-title">实时分析</div>
+        <div class="page-desc">选择数据源（OKX / MT5 / TradingView），收盘后更新因子信号</div>
+      </div>
+      <div id="analysis-content"></div>
+    </div>
+
+    <!-- ════════ Trading ════════ -->
+    <div id="page-trading" class="page">
+      <div class="page-header">
+        <div class="page-title">实盘交易</div>
+        <div class="page-desc">选择策略和品种，设置本金与杠杆，执行交易信号（默认 paper 模式）</div>
+      </div>
+      <div id="trading-content"></div>
+    </div>
+
+    <!-- ════════ Data ════════ -->
+    <div id="page-data" class="page">
+      <div class="page-header">
+        <div class="page-title">数据管理</div>
+        <div class="page-desc">管理本地 Parquet 数据文件，从 OKX 下载 K 线</div>
+      </div>
+      <div id="data-content"></div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ── Toast Container ──────────────────────── -->
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/js/app.js?v=20260727_import"></script>
+</body>
+</html>
