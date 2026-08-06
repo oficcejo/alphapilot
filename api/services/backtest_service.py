@@ -18,7 +18,7 @@ from model.backtest import MT5Backtest
 from strategy_manager.signal import compute_target_positions_stateless
 from data_pipeline.parquet_manager import load_parquet_to_raw_dict
 from data_pipeline.timeframe_utils import infer_periods_per_year
-from api.services.strategy_service import load_strategy, decode_formula
+from api.services.strategy_service import load_strategy, decode_formula, eval_strategy_factor
 
 
 class BacktestService:
@@ -51,6 +51,7 @@ class BacktestService:
         """
         # 1. 加载策略（支持单因子策略与组合策略）
         strategy = load_strategy(strategy_path)
+        formula = strategy.get("formula", strategy.get("strategies", []))
         formula_decoded = strategy.get("formula_decoded", "")
 
         # 2. 加载数据
