@@ -428,6 +428,7 @@ class TradingService:
 
         # 1. 加载策略（支持单因子策略与组合策略）
         strategy = load_strategy(strategy_path)
+        formula = strategy.get("formula")
         formula_decoded = strategy.get("formula_decoded", "")
 
         # 2. 获取行情
