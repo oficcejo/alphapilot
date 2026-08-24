@@ -74,6 +74,11 @@ class Config:
     WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
     WEB_PORT = int(os.getenv("WEB_PORT", "8009"))
 
+    # ── 实时信号 ──────────────────────────────────────────────────────────
+    # 实时/实盘侧最小 bar 数：特征 warm-up（robust_norm 200 + EMA26 ~360）
+    # + VM 滚动归一化窗口 500 → 取 800 保证数值路径稳定（不足则拒绝出信号）
+    REALTIME_MIN_BARS = int(os.getenv("REALTIME_MIN_BARS", "800"))
+
 
 # ── 运行时单例 ─────────────────────────────────────────────────────────────
 cfg = Config()

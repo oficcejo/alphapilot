@@ -1,0 +1,6 @@
+{
+  "symbol": "ETH-USDT-SWAP",
+  "timeframe": "15m",
+  "n_bars": 4000,
+  "file_path": "D:\\www\\okx\\okx-alpha-pilot\\data\\ETH-USDT-SWAP_15m.parquet"
+}

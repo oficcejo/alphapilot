@@ -73,7 +73,10 @@ class MT5Backtest:
     # ──────────────────────────────────────────────────────────────────────
 
     def _ts_ic_stability(self, factors: Tensor, target_ret: Tensor) -> float:
-        """时序 IC 稳定性：每个品种内部 factor[t] 与 ret[t+1] 的相关性均值。
+        """时序 IC 稳定性：每个品种内部 factor[t] 与 target_ret[t] 的相关性均值。
+
+        target_ret[t] 为"下一开盘成交"前向收益（log(open[t+2]/open[t+1])），
+        与 factor[t] 同索引对齐，严格因果。
 
         比横截面 IC 更适合 5 品种宇宙（横截面 N=5 统计意义弱）。
 
@@ -86,8 +89,8 @@ class MT5Backtest:
 
         ic_list = []
         for n in range(N):
-            x = factors[n, :-1]
-            y = target_ret[n, 1:]
+            x = factors[n]
+            y = target_ret[n]
             xm = x - x.mean()
             ym = y - y.mean()
             sx = (xm ** 2).mean().sqrt()

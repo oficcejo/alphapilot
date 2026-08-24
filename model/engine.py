@@ -396,8 +396,10 @@ class AlphaEngine:
     @staticmethod
     def _compute_ic(factor: torch.Tensor, target_ret: torch.Tensor
                     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """时序 IC（每品种内部 factor[t] vs ret[t+1]）的均值与稳定性。
+        """时序 IC（每品种内部 factor[t] vs target_ret[t]）的均值与稳定性。
 
+        target_ret[t] 为"下一开盘成交"前向收益（log(open[t+2]/open[t+1])），
+        与 factor[t] 同索引对齐，严格因果。
         对 5 品种宇宙，时序 IC 比横截面 IC 统计意义更强。
         """
         N, T = factor.shape
@@ -407,8 +409,8 @@ class AlphaEngine:
 
         ic_list = []
         for n in range(N):
-            x  = factor[n, :-1]
-            y  = target_ret[n, 1:]
+            x  = factor[n]
+            y  = target_ret[n]
             xm = x - x.mean()
             ym = y - y.mean()
             sx = (xm ** 2).mean().sqrt()

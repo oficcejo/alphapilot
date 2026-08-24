@@ -27,12 +27,21 @@ class DataManager:
     def __init__(self, raw_dict: dict):
         self.raw_dict = raw_dict
         self.feat_tensor = MT5FeatureEngineer.compute_features(raw_dict)
-        # target_ret: 下一 bar 的对数收益
-        close = raw_dict["close"]  # [N, T]
-        eps = 1e-9
-        log_ret = torch.zeros_like(close)
-        log_ret[:, 1:] = torch.log(close[:, 1:] / (close[:, :-1] + eps))
-        self.target_ret = log_ret
+        # target_ret: 下一开盘成交的对数收益（严格因果，无 look-ahead）
+        #   target_ret[t] = log(open[t+2] / open[t+1])
+        #   含义：bar t 收盘出信号 → t+1 开盘进场 → t+2 开盘平仓。
+        #   旧实现用 log(close[t]/close[t-1])（本 bar 收益），信号与收益同为
+        #   close[t] 决定，构成同 bar 未来函数，回测虚高、实盘失效。
+        #   最后两个时间步无完整持有区间，置 0。
+        open_ = raw_dict["open"]  # [N, T]
+        n, t = open_.shape
+        target = torch.zeros_like(open_)
+        if t >= 3:
+            numerator = open_[:, 2:]
+            denominator = open_[:, 1:-1].clone()
+            denominator[denominator == 0] = 1.0
+            target[:, : t - 2] = torch.log(numerator / denominator)
+        self.target_ret = target
 
 
 class TrainingService:

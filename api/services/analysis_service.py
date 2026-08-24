@@ -15,7 +15,7 @@ from model.features import MT5FeatureEngineer
 from strategy_manager.signal import compute_target_positions_stateless, signal_to_action
 from data_pipeline.okx_client import OKXClient, get_public_client
 from data_pipeline.parquet_manager import load_parquet_to_raw_dict
-from api.services.strategy_service import load_strategy, decode_formula
+from api.services.strategy_service import load_strategy, decode_formula, eval_strategy_factor
 
 
 class AnalysisService:
@@ -24,8 +24,28 @@ class AnalysisService:
     def __init__(self):
         self.vm = StackVM()
 
+    @staticmethod
+    def _sanitize_candles(candles: list[list]) -> list[list]:
+        """清洗 OKX K 线列表：过滤未收盘 bar + 按时间升序排序。
+
+        OKX 返回按时间倒序且首根为进行中 bar；特征计算必须使用
+        升序、已收盘的 K 线（与训练/回测口径一致）。
+        """
+        cleaned = {}
+        for c in candles:
+            if not c or len(c) < 6:
+                continue
+            ts = int(c[0])
+            if ts in cleaned:
+                continue
+            # confirm: '0'=未收盘（进行中），'1'=已收盘
+            if len(c) >= 9 and str(c[8]) == "0":
+                continue
+            cleaned[ts] = c
+        return [cleaned[ts] for ts in sorted(cleaned)]
+
     def _candles_to_raw_dict(self, candles: list[list], symbol: str, bar: str) -> dict:
-        """OKX K 线列表 → raw_dict。"""
+        """OKX K 线列表 → raw_dict（输入须为升序已收盘 K 线）。"""
         if not candles:
             raise ValueError("K 线数据为空")
         close = np.array([float(c[4]) for c in candles], dtype=np.float64)
@@ -44,12 +64,27 @@ class AnalysisService:
             "time": time_arr,
         }
 
+    @staticmethod
+    def _forward_open_ret(raw_dict: dict) -> "torch.Tensor":
+        """下一开盘成交的对数收益 target_ret[t] = log(open[t+2]/open[t+1])。
+
+        与训练/回测口径一致，最后两个时间步置 0。
+        """
+        open_ = raw_dict["open"]
+        t = open_.shape[1]
+        fwd = torch.zeros_like(open_)
+        if t >= 3:
+            denominator = open_[:, 1:-1].clone()
+            denominator[denominator == 0] = 1.0
+            fwd[:, : t - 2] = torch.log(open_[:, 2:] / denominator)
+        return fwd
+
     def analyze_okx(
         self,
         strategy_path: str,
         inst_id: str,
         bar: str = "1H",
-        limit: int = 300,
+        limit: int = None,
     ) -> dict:
         """从 OKX 获取最新 K 线并计算信号。
 
@@ -57,20 +92,35 @@ class AnalysisService:
             strategy_path: 策略 JSON 路径
             inst_id: OKX 合约 ID，如 BTC-USDT-SWAP
             bar: K 线周期
-            limit: K 线数量
+            limit: K 线数量（默认取 Config.REALTIME_MIN_BARS，保证归一化收敛）
 
         Returns:
             分析结果（含最新信号、仓位建议、因子值序列）
         """
         # 1. 加载策略（支持单因子策略与组合策略）
         strategy = load_strategy(strategy_path)
+        formula = strategy.get("formula")
         formula_decoded = strategy.get("formula_decoded", "")
 
-        # 2. 获取 OKX K 线
+        # 2. 获取 OKX 已收盘 K 线（自动分页、升序、过滤未收盘 bar）
+        min_bars = getattr(Config, "REALTIME_MIN_BARS", 800)
+        need = max(int(limit or 0), min_bars)
         client = get_public_client()
-        candles = client.get_candles(inst_id, bar, limit)
+        candles = client.get_recent_candles(inst_id, bar, total=need, only_confirmed=True)
         if not candles:
             raise RuntimeError(f"未获取到 {inst_id} K线数据")
+        if len(candles) < min_bars:
+            return {
+                "source": "okx",
+                "inst_id": inst_id,
+                "bar": bar,
+                "state": "insufficient",
+                "n_candles": len(candles),
+                "message": (
+                    f"历史 bar 不足（{len(candles)}/{min_bars}），"
+                    f"无法稳定计算特征与滚动归一化"
+                ),
+            }
 
         raw_dict = self._candles_to_raw_dict(candles, inst_id, bar)
 
@@ -86,7 +136,7 @@ class AnalysisService:
         # 5. 计算仓位
         position = compute_target_positions_stateless(factor)
 
-        # 6. 最新信号
+        # 6. 最新信号（最后一根已收盘 bar）
         last_factor = float(factor[0, -1].item())
         last_position = float(position[0, -1].item())
         last_price = float(raw_dict["close"][0, -1].item())
@@ -104,12 +154,9 @@ class AnalysisService:
         short_bars = int((position[0] < -0.05).sum().item())
         flat_bars = int(factor.shape[1] - long_bars - short_bars)
 
-        # 9. 简单 PnL 估算（无成本）
-        close = raw_dict["close"]
-        eps = 1e-9
-        log_ret = torch.zeros_like(close)
-        log_ret[:, 1:] = torch.log(close[:, 1:] / (close[:, :-1] + eps))
-        pnl = (position * log_ret)
+        # 9. PnL 估算（无成本，下一开盘成交口径，与回测一致）
+        fwd_ret = self._forward_open_ret(raw_dict)
+        pnl = (position * fwd_ret)
         cum_pnl = pnl.reshape(-1).cumsum(0).numpy()
         total_ret = float(cum_pnl[-1]) if len(cum_pnl) > 0 else 0.0
 
@@ -153,6 +200,7 @@ class AnalysisService:
     ) -> dict:
         """从本地 Parquet 分析信号（MT5 / 本地数据模式）。"""
         strategy = load_strategy(strategy_path)
+        formula = strategy.get("formula")
         formula_decoded = strategy.get("formula_decoded", "")
 
         raw_dict = load_parquet_to_raw_dict(data_file)
@@ -179,11 +227,8 @@ class AnalysisService:
         long_bars = int((position[0] > 0.05).sum().item())
         short_bars = int((position[0] < -0.05).sum().item())
 
-        close = raw_dict["close"]
-        eps = 1e-9
-        log_ret = torch.zeros_like(close)
-        log_ret[:, 1:] = torch.log(close[:, 1:] / (close[:, :-1] + eps))
-        pnl = (position * log_ret)
+        fwd_ret = self._forward_open_ret(raw_dict)
+        pnl = (position * fwd_ret)
         cum_pnl = pnl.reshape(-1).cumsum(0).numpy()
         total_ret = float(cum_pnl[-1]) if len(cum_pnl) > 0 else 0.0
 

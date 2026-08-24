@@ -72,11 +72,17 @@ class BacktestService:
         # 4. 计算仓位信号
         position = compute_target_positions_stateless(factor)  # [N, T]
 
-        # 5. 计算 PnL（对数收益率空间）
-        eps = 1e-9
-        log_ret = torch.zeros_like(close)
-        log_ret[:, 1:] = torch.log(close[:, 1:] / (close[:, :-1] + eps))
-        target_ret = log_ret
+        # 5. 计算 PnL（对数收益率空间，下一开盘成交口径，无未来函数）
+        #    target_ret[t] = log(open[t+2] / open[t+1])：
+        #    bar t 收盘出信号 → t+1 开盘进场 → t+2 开盘平仓。
+        #    与训练侧 DataManager.target_ret 完全一致。
+        open_ = raw_dict["open"]  # [N, T]
+        target_ret = torch.zeros_like(close)
+        if T >= 3:
+            numerator = open_[:, 2:]
+            denominator = open_[:, 1:-1].clone()
+            denominator[denominator == 0] = 1.0
+            target_ret[:, : T - 2] = torch.log(numerator / denominator)
 
         # 换手率
         prev_pos = torch.roll(position, 1, dims=1)

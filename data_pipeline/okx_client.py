@@ -179,6 +179,51 @@ class OKXClient:
             raise RuntimeError(f"OKX API error: {data.get('msg', data)}")
         return data.get("data", [])
 
+    def get_recent_candles(
+        self,
+        inst_id: str,
+        bar: str = "1H",
+        total: int = 800,
+        only_confirmed: bool = True,
+    ) -> list[list]:
+        """获取最近 total 根 K 线，按时间升序返回。
+
+        OKX /market/candles 单次最多 300 根、按时间倒序返回、且第一根是
+        未收盘的进行中 bar。此方法自动分页拉取并可选过滤未收盘 K 线
+        （confirm 字段 == '0'），保证：
+          1. 时间升序（特征计算依赖正确时序）
+          2. 只含已收盘 bar（与训练/回测口径一致，避免盘中信号抖动）
+        """
+        collected: dict[int, list] = {}
+        after: Optional[str] = None
+        max_pages = max(2, total // 100 + 4)
+        for _ in range(max_pages):
+            batch_limit = min(300, max(50, total - len(collected)))
+            try:
+                batch = self.get_candles(inst_id, bar, batch_limit, after)
+            except Exception:
+                if collected:
+                    break
+                raise
+            if not batch:
+                break
+            for c in batch:
+                ts = int(c[0])
+                if ts in collected:
+                    continue
+                # confirm: '0'=未收盘（进行中），'1'=已收盘
+                if only_confirmed and len(c) >= 9 and str(c[8]) == "0":
+                    continue
+                collected[ts] = c
+            oldest = min(int(c[0]) for c in batch)
+            if after is not None and str(oldest) >= after:
+                break  # 游标无进展，防死循环
+            after = str(oldest)
+            if len(collected) >= total:
+                break
+            time.sleep(0.12)  # 限流保护
+        return [collected[ts] for ts in sorted(collected)]
+
     def get_ticker(self, inst_id: str) -> dict:
         """获取最新行情。"""
         path = f"/api/v5/market/ticker?instId={inst_id}"

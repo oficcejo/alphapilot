@@ -431,9 +431,12 @@ class TradingService:
         formula = strategy.get("formula")
         formula_decoded = strategy.get("formula_decoded", "")
 
-        # 2. 获取行情
+        # 2. 获取行情（自动分页、升序、只含已收盘 K 线）
+        #    旧实现 get_candles(limit=300) 返回倒序且含未收盘 bar，
+        #    导致信号基于时间倒序的序列计算——实盘信号完全失真。
+        min_bars = getattr(Config, "REALTIME_MIN_BARS", 800)
         client = get_public_client()
-        candles = client.get_candles(inst_id, bar, limit=300)
+        candles = client.get_recent_candles(inst_id, bar, total=min_bars, only_confirmed=True)
         if not candles:
             raise RuntimeError(f"未获取到 {inst_id} 行情")
 
@@ -443,6 +446,12 @@ class TradingService:
         low_arr = np.array([float(c[3]) for c in candles], dtype=np.float64)
         vol_arr = np.array([float(c[5]) for c in candles], dtype=np.float64)
         time_arr = np.array([int(c[0]) // 1000 if int(c[0]) > 1e12 else int(c[0]) for c in candles], dtype=np.float64)
+
+        if len(candles) < min_bars:
+            raise RuntimeError(
+                f"历史 bar 不足（{len(candles)}/{min_bars}），"
+                f"无法稳定计算特征与滚动归一化，拒绝出信号"
+            )
 
         raw_dict = {
             "close": torch.from_numpy(close_arr).unsqueeze(0).float(),

@@ -155,39 +155,62 @@ class StackVM:
         """
         对因子输出做标准化，确保幅度足够触发 neutral band 入场。
 
-        策略（三级降级）：
+        策略（两级降级，全部因果）：
         1. 截面 zscore（跨品种，每时间步）：适合因子跨品种有分散
-        2. 时序 zscore（每品种，全局）：当截面 std 太小时使用
-        3. 若两级都失败（因子是常数）：返回原值，由 const_cnt 拦截
+        2. 滚动时序 zscore（每品种，固定窗口 500，无 look-ahead）
+
+        P2-8 修复（原全局 expanding → rolling，移植自上游 AlphaMaster）：
+        - 原代码用全序列 mean/std 归一化：t 时刻的因子值依赖未来数据，
+          构成未来函数；且回测（长历史）与实盘（短历史）的归一化参数
+          系统性不一致，导致信号漂移甚至变号。
+        - 改为滚动 z-score（窗口 500）：最后一根 bar 只依赖最近 500 期，
+          与历史长度无关；T < 窗口时退化为 expanding（仍因果）。
+        - warm-up 期（前 window-1 根）输出 0（因子中性，不出信号）。
 
         Returns:
             [N, T] clip 到 [-3, 3]，若是常数则返回原值（engine 会过滤）
         """
         N, T = x.shape
 
-        # 检测是否是全局常数（标准化无意义）
+        # 检测是否是全局常数（标准化无意义，x.std() 是统计量非时间依赖）
         global_std = x.std()
         if global_std < 1e-6:
             return x   # 常数因子，由 engine 的 const_cnt 拦截
 
         # ── 截面标准化（跨品种，每时间步；N=1 时跳过）──────────────
+        # cs_std 沿 N 维计算，t 时刻的 cs_std 只用 {x[n, t] : n}，无未来信息
         if N > 1:
             cs_mean = x.mean(dim=0, keepdim=True)
             cs_std  = x.std(dim=0, keepdim=True).clamp(min=1e-8)
             cs_z    = (x - cs_mean) / cs_std
-            if cs_z.std() >= 0.3:
-                return torch.clamp(cs_z, -3.0, 3.0)
+            return torch.clamp(cs_z, -3.0, 3.0)
 
-        # ── 时序标准化（每品种独立）─────────────────────────────────
-        ts_mean = x.mean(dim=1, keepdim=True)
-        ts_std  = x.std(dim=1, keepdim=True).clamp(min=1e-8)
-        ts_z    = (x - ts_mean) / ts_std
+        # ── 滚动时序标准化（每品种独立，固定窗口，无 look-ahead）─────
+        _ROLL_WINDOW = 500
 
-        if ts_z.std() >= 0.1:
+        if T < _ROLL_WINDOW:
+            # 样本不足：退化为 expanding z-score（仍因果，无 look-ahead）
+            cnt = torch.arange(1, T + 1, device=x.device, dtype=x.dtype).view(1, T)
+            cumsum = x.cumsum(dim=1)
+            ts_mean = cumsum / cnt
+            cumsum_sq = (x * x).cumsum(dim=1)
+            ts_var = (cumsum_sq / cnt) - ts_mean * ts_mean
+            ts_std = ts_var.clamp(min=1e-8).sqrt()
+            ts_z = (x - ts_mean) / ts_std
             return torch.clamp(ts_z, -3.0, 3.0)
 
-        # ── 两级均失败：因子无区分度，返回原值让 engine 过滤 ────────
-        return x
+        # 滚动均值/标准差（窗口 _ROLL_WINDOW，因果：只用 [t-W+1, t]）
+        padded = torch.nn.functional.pad(x, (_ROLL_WINDOW - 1, 0), value=0.0)  # [N, T+W-1]
+        windows = padded.unfold(1, _ROLL_WINDOW, 1)  # [N, T, W]
+        ts_mean = windows.mean(dim=2)       # [N, T]
+        ts_std = windows.std(dim=2).clamp(min=1e-8)  # [N, T]
+        ts_z = (x - ts_mean) / ts_std       # [N, T]
+
+        # warm-up 期（前 _ROLL_WINDOW-1 根）输出 0（因子中性，不出信号）
+        warmup_mask = torch.arange(T, device=x.device) < (_ROLL_WINDOW - 1)
+        ts_z[:, warmup_mask] = 0.0
+
+        return torch.clamp(ts_z, -3.0, 3.0)
 
     def execute(self, formula_tokens, feat_tensor):
         stack = []
