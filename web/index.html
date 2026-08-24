@@ -31,6 +31,10 @@
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
         策略回测
       </a>
+      <a class="nav-item" data-page="audit" onclick="App.navigate('audit')">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        审计中心
+      </a>
       <a class="nav-item" data-page="analysis" onclick="App.navigate('analysis')">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
         实时分析
@@ -79,6 +83,15 @@
         <div class="page-desc">选择策略和数据，设置手续费和滑点，查看资金曲线和绩效指标</div>
       </div>
       <div id="backtest-content"></div>
+    </div>
+
+    <!-- ════════ Audit ════════ -->
+    <div id="page-audit" class="page">
+      <div class="page-header">
+        <div class="page-title">审计中心</div>
+        <div class="page-desc">独立严谨回测审计（下一开盘成交口径）+ 未来函数防泄漏自检</div>
+      </div>
+      <div id="audit-content"></div>
     </div>
 
     <!-- ════════ Analysis ════════ -->
@@ -145,6 +158,6 @@
 <!-- ── Toast Container ──────────────────────── -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="/static/js/app.js?v=20260727_portfolio"></script>
+<script src="/static/js/app.js?v=20260824_audit"></script>
 </body>
 </html>

@@ -107,7 +107,9 @@ def segment_metrics(pnl: np.ndarray, pos_flat: np.ndarray,
 
 
 def audit_strategy(path: str, data_file: str | None,
-                   leverage: int = 1) -> dict | None:
+                   leverage: int = 1,
+                   cost_rate: float = COST_RATE,
+                   slippage: float = SLIPPAGE) -> dict | None:
     strategy = load_strategy(path)
     if not data_file:
         data_file = find_data_file(strategy)
@@ -154,7 +156,7 @@ def audit_strategy(path: str, data_file: str | None,
         "last_20pct": (int(T * 0.8), T),
     }
     for name, (a, b) in segments.items():
-        pnl = ((pos * fwd - turnover * (COST_RATE + SLIPPAGE)) * leverage)[:, a:b]
+        pnl = ((pos * fwd - turnover * (cost_rate + slippage)) * leverage)[:, a:b]
         result["segments"][name] = segment_metrics(
             pnl.reshape(-1).numpy(), pos[:, a:b].reshape(-1).numpy(),
             float(turnover[:, a:b].mean()), ppy,
@@ -163,7 +165,7 @@ def audit_strategy(path: str, data_file: str | None,
     # 成本压力测试（尾段 20%）
     a, b = segments["last_20pct"]
     for mult in (1, 2, 3):
-        pnl = ((pos * fwd - turnover * (COST_RATE + SLIPPAGE) * mult) * leverage)[:, a:b]
+        pnl = ((pos * fwd - turnover * (cost_rate + slippage) * mult) * leverage)[:, a:b]
         flat = pnl.reshape(-1).numpy()
         result["cost_stress_last20"][f"{mult}x"] = {
             "total_return_pct": round((math.exp(flat.sum()) - 1.0) * 100, 2),

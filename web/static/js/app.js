@@ -720,6 +720,192 @@ delete_history: true,
     }));
   },
 
+  // ════════ Audit（审计中心）════════
+
+  async render_audit() {
+    const el = document.getElementById('audit-content');
+    try {
+      const [strategies, parquets] = await Promise.all([
+        fetchJSON(`${API}/training/strategies`),
+        fetchJSON(`${API}/data/parquets`),
+      ]);
+      this._auditStrategies = strategies.strategies || [];
+      const stratOpts = this._auditStrategies.map(s =>
+        `<option value="${s.file_path}">${s.is_portfolio ? '📈 [组合] ' : ''}${s.file_name} (${s.symbol || '-'})</option>`
+      ).join('') || '<option value="">无策略</option>';
+      const dataOpts = (parquets.files || []).map(f =>
+        `<option value="${f.file_path}">${f.file_name} (${f.symbol} ${f.timeframe}, ${f.n_bars} bars)</option>`
+      ).join('');
+
+      el.innerHTML = `
+        <div class="grid-2">
+          <div>
+            <div class="card">
+              <div class="card-title">严谨回测审计</div>
+              <div class="alert alert-warning" style="font-size:12px;padding:8px 12px">
+                独立于训练评分，从第一性原理按<b>下一开盘成交</b>口径重算 PnL，
+                含前后半段一致性、尾段 20% OOS 与 1x/2x/3x 成本压力测试。
+              </div>
+              <div class="form-group">
+                <label class="form-label">策略文件</label>
+                <select class="form-select" id="aud-strategy">${stratOpts}</select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">数据文件（留空 = 按策略元数据自动匹配）</label>
+                <select class="form-select" id="aud-data"><option value="">自动匹配</option>${dataOpts}</select>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">手续费率</label><input class="form-input" id="aud-cost" type="number" value="0.0005" step="0.0001"></div>
+                <div class="form-group"><label class="form-label">滑点</label><input class="form-input" id="aud-slippage" type="number" value="0.0003" step="0.0001"></div>
+                <div class="form-group"><label class="form-label">杠杆</label><input class="form-input" id="aud-leverage" type="number" value="1" min="1" max="20"></div>
+              </div>
+              <div class="flex gap-2">
+                <button class="btn btn-success flex-1" onclick="App.runAudit(false)">审计当前策略</button>
+                <button class="btn btn-ghost flex-1" onclick="App.runAudit(true)">审计全部策略</button>
+              </div>
+            </div>
+
+            <div class="card mt-4">
+              <div class="card-title flex items-center justify-between">
+                <span>防泄漏自检</span>
+                <span id="selftest-badge" class="mode-badge" style="background:#334155;color:#94a3b8">未运行</span>
+              </div>
+              <div class="text-muted text-sm" style="margin-bottom:12px">
+                验证 target_ret 对齐、VM 归一化因果性、纯 RET 公式无法盈利等
+                5 项未来函数防回归断言。
+              </div>
+              <button class="btn btn-success w-full" onclick="App.runSelfTest()">运行自检</button>
+            </div>
+          </div>
+
+          <div id="audit-result-area">
+            <div class="card"><div class="card-title">审计结果</div><div class="text-muted text-center" style="padding:40px">选择策略后点击「审计」</div></div>
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      el.innerHTML = `<div class="alert alert-danger">加载失败: ${e.message}</div>`;
+    }
+  },
+
+  async runAudit(all) {
+    const area = document.getElementById('audit-result-area');
+    const strategy = all ? null : document.getElementById('aud-strategy').value;
+    if (!all && !strategy) { toast('请选择策略', 'error'); return; }
+    const dataSel = document.getElementById('aud-data').value;
+    area.innerHTML = '<div class="card"><div class="card-title">审计结果</div><div class="loading-overlay"><span class="spinner"></span> 审计计算中（约数秒/策略）...</div></div>';
+    try {
+      const r = await fetchJSON(`${API}/audit/run`, {
+        method: 'POST',
+        body: JSON.stringify({
+          strategy_path: strategy,
+          data_file: dataSel || null,
+          cost_rate: parseFloat(document.getElementById('aud-cost').value) || 0.0005,
+          slippage: parseFloat(document.getElementById('aud-slippage').value) || 0.0003,
+          leverage: parseInt(document.getElementById('aud-leverage').value) || 1,
+        }),
+      });
+      this._lastAuditReports = r.reports || [];
+      this.renderAuditReports(this._lastAuditReports, r.saved_to);
+      toast(`审计完成（${this._lastAuditReports.length} 个策略）`, 'success');
+    } catch (e) {
+      area.innerHTML = `<div class="card"><div class="card-title">审计结果</div><div class="alert alert-danger">审计失败: ${e.message}</div></div>`;
+      toast(`审计失败: ${e.message}`, 'error');
+    }
+  },
+
+  renderAuditReports(reports, savedTo) {
+    const area = document.getElementById('audit-result-area');
+    if (!reports.length) {
+      area.innerHTML = '<div class="card"><div class="card-title">审计结果</div><div class="text-muted text-center" style="padding:40px">无结果</div></div>';
+      return;
+    }
+    const segNames = { full: '全样本', first_half: '前半段', second_half: '后半段', last_20pct: '尾段20%' };
+
+    const html = reports.map(r => {
+      if (r.error && !r.segments) {
+        return `<div class="card mb-4"><div class="card-title">${r.strategy || '未知'}</div><div class="alert alert-danger">${r.error}</div></div>`;
+      }
+      const segRows = Object.entries(r.segments).map(([k, m]) => `
+        <tr>
+          <td>${segNames[k] || k}</td>
+          <td class="text-mono ${m.total_return_pct >= 0 ? 'text-success' : 'text-danger'}">${fmtPct(m.total_return_pct)}</td>
+          <td class="text-mono ${m.cagr_pct >= 0 ? 'text-success' : 'text-danger'}">${fmtPct(m.cagr_pct)}</td>
+          <td class="text-mono ${m.sortino >= 0 ? 'text-success' : 'text-danger'}">${fmtNum(m.sortino, 2)}</td>
+          <td class="text-mono">${fmtNum(m.sharpe, 2)}</td>
+          <td class="text-mono text-danger">${m.max_drawdown_pct}%</td>
+          <td class="text-mono">${m.win_rate_pct}%</td>
+          <td class="text-mono">${m.exposure_pct}%</td>
+        </tr>`).join('');
+
+      const stress = Object.entries(r.cost_stress_last20 || {}).map(([k, v]) => `
+        <span style="margin-right:14px">${k}: <b class="text-mono ${v.total_return_pct >= 0 ? 'text-success' : 'text-danger'}">${fmtPct(v.total_return_pct)}</b> (Sortino ${fmtNum(v.sortino, 2)})</span>`).join('');
+
+      const flags = (r.flags || []).map(f =>
+        `<li>${f}</li>`).join('');
+      const flagHtml = flags.length
+        ? `<ul style="margin:8px 0 0 20px;color:var(--danger);font-size:13px;line-height:1.8">${flags}</ul>`
+        : '<div class="text-success text-sm" style="margin-top:8px">✓ 未触发风险信号</div>';
+
+      return `
+        <div class="card mb-4">
+          <div class="card-title flex items-center justify-between">
+            <span>${r.strategy}</span>
+            <span class="text-muted text-sm text-mono">${r.bars} bars · 多空 ${r.long_pct}%/${r.short_pct}%</span>
+          </div>
+          <div class="table-wrapper">
+            <table>
+              <thead><tr><th>段</th><th>总收益</th><th>CAGR</th><th>Sortino</th><th>Sharpe</th><th>MaxDD</th><th>胜率</th><th>暴露</th></tr></thead>
+              <tbody>${segRows}</tbody>
+            </table>
+          </div>
+          <div class="text-sm mt-3">成本压力(尾段20%)：${stress}</div>
+          <div class="mt-2">${flagHtml}</div>
+        </div>`;
+    }).join('');
+
+    area.innerHTML = html + (savedTo ? `<div class="text-muted text-sm text-center">报告已保存: ${savedTo}</div>` : '');
+  },
+
+  async runSelfTest() {
+    const badge = document.getElementById('selftest-badge');
+    badge.textContent = '运行中...';
+    badge.style.background = '#92400e'; badge.style.color = '#fde68a';
+    try {
+      const r = await fetchJSON(`${API}/audit/selftest`, { method: 'POST' });
+      if (r.all_passed) {
+        badge.textContent = `通过 ${r.passed_count}/${r.total}`;
+        badge.style.background = 'rgba(16,185,129,0.15)'; badge.style.color = 'var(--success)';
+      } else {
+        badge.textContent = `失败 ${r.passed_count}/${r.total}`;
+        badge.style.background = 'rgba(239,68,68,0.15)'; badge.style.color = 'var(--danger)';
+      }
+      const rows = r.tests.map(t => `
+        <tr>
+          <td class="text-mono text-sm">${t.name}</td>
+          <td>${t.passed ? '<span class="text-success">✓ 通过</span>' : `<span class="text-danger">✗ 失败</span>`}</td>
+          <td class="text-mono text-muted">${t.ms} ms</td>
+          <td class="text-sm text-secondary" style="max-width:280px;word-break:break-all">${t.error || '-'}</td>
+        </tr>`).join('');
+      const area = document.getElementById('audit-result-area');
+      area.innerHTML = `
+        <div class="card">
+          <div class="card-title">防泄漏自检结果</div>
+          <div class="table-wrapper">
+            <table>
+              <thead><tr><th>测试项</th><th>状态</th><th>耗时</th><th>错误详情</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+      toast(r.all_passed ? '自检全部通过' : '自检存在失败项', r.all_passed ? 'success' : 'error');
+    } catch (e) {
+      badge.textContent = '运行出错';
+      badge.style.background = 'rgba(239,68,68,0.15)'; badge.style.color = 'var(--danger)';
+      toast(`自检失败: ${e.message}`, 'error');
+    }
+  },
+
   // ════════ Analysis ════════
   async render_analysis() {
     const el = document.getElementById('analysis-content');

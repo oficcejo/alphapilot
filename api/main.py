@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from contextlib import asynccontextmanager
 
 from config import Config
-from api.routers import data, training, backtest, analysis, trading, portfolio
+from api.routers import data, training, backtest, analysis, trading, portfolio, audit
 
 
 @asynccontextmanager
@@ -82,6 +82,7 @@ app.include_router(backtest.router)
 app.include_router(analysis.router)
 app.include_router(trading.router)
 app.include_router(portfolio.router)
+app.include_router(audit.router)
 
 
 # ── 系统状态 ────────────────────────────────────────────────────────────────
