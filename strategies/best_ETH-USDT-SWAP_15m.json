@@ -1,0 +1,18 @@
+{
+  "vocab_version": "v9217a2c0d91a",
+  "symbol": "ETH-USDT-SWAP",
+  "timeframe": "15m",
+  "data_file": "D:\\www\\okx\\okx-alpha-pilot\\data\\ETH-USDT-SWAP_15m.parquet",
+  "formula": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    69,
+    72,
+    72
+  ],
+  "best_score": -1.9937012195587158,
+  "formula_decoded": "RET -> RET -> RET -> RET -> RET -> NEG -> GATE -> GATE"
+}

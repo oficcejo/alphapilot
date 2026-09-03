@@ -413,6 +413,7 @@ class OKXClient:
         td_mode: str = "cross",  # cross / isolated / cash
         cl_ord_id: str = "",
         tag: Optional[str] = None,
+        sl_trigger_px: Optional[str] = None,  # 附带止损触发价 (市价止损)
     ) -> dict:
         """下单。
 
@@ -435,6 +436,7 @@ class OKXClient:
                 "td_mode": td_mode,
                 "cl_ord_id": cl_ord_id,
                 "broker_tag": broker_tag,
+                "sl_trigger_px": sl_trigger_px,
                 "msg": "PAPER / SIMULATED — 未发送真实订单。设置 TRADING_MODE=live + 完整凭证以启用实盘。",
                 "timestamp": int(time.time() * 1000),
             }
@@ -453,6 +455,15 @@ class OKXClient:
         if cl_ord_id:
             body_dict["clOrdId"] = cl_ord_id
         body_dict["tag"] = broker_tag
+
+        # 附带交易所级硬止损（attachAlgoOrds，最新价触发市价止损）
+        if sl_trigger_px:
+            body_dict["attachAlgoOrds"] = [{
+                "attachAlgoClOrdId": f"sl{int(time.time())}"[:32],
+                "slTriggerPx": str(sl_trigger_px),
+                "slOrdPx": "-1",  # -1 表示市价委托平仓
+                "slTriggerPxType": "last",
+            }]
 
         body = json.dumps(body_dict)
         path = "/api/v5/trade/order"
@@ -546,6 +557,44 @@ class OKXClient:
         resp.raise_for_status()
         data = resp.json()
         return data
+
+    def cancel_algo_orders(self, inst_id: str, algo_ids: Optional[list[str]] = None) -> list[dict]:
+        """撤销策略委托（止损止盈单）。"""
+        if not Config.is_live():
+            return [{"instId": inst_id, "simulated": True, "msg": "PAPER — 模拟撤销策略委托"}]
+        try:
+            # 如果未指定 algo_ids，先查询所有待触发的策略委托
+            if not algo_ids:
+                pending = self.get_algo_orders(inst_id)
+                algo_ids = [a.get("algoId") for a in pending if a.get("algoId")]
+            if not algo_ids:
+                return []
+            body_list = [{"instId": inst_id, "algoId": aid} for aid in algo_ids]
+            body = json.dumps(body_list)
+            path = "/api/v5/trade/cancel-algos"
+            headers = self._auth_headers("POST", path, body)
+            url = self.base_url + path
+            resp = self._session.post(url, headers=headers, data=body, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("data", [])
+        except Exception:
+            return []
+
+    def get_algo_orders(self, inst_id: str, ord_type: str = "conditional") -> list[dict]:
+        """查询未触发的策略委托单。"""
+        if not Config.is_live():
+            return []
+        try:
+            path = f"/api/v5/trade/orders-algo-pending?instType=SWAP&instId={inst_id}&ordType={ord_type}"
+            headers = self._auth_headers("GET", path, "")
+            url = self.base_url + path
+            resp = self._session.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("data", [])
+        except Exception:
+            return []
 
 
 # ── 便捷工厂 ───────────────────────────────────────────────────────────────

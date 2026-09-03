@@ -15,7 +15,7 @@ env/
 ENV/
 
 # Data, Checkpoints and Audit Logs
-data/*.parquet
+data/*
 !data/.gitkeep
 checkpoints/*.pt
 checkpoints/*.pth

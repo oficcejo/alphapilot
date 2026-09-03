@@ -1,0 +1,17 @@
+{
+  "vocab_version": "v9217a2c0d91a",
+  "symbol": "ETH-USDT-SWAP",
+  "timeframe": "5m",
+  "formula": [
+    41,
+    96,
+    95,
+    101,
+    98,
+    84,
+    73,
+    70
+  ],
+  "best_score": 6.811457633972168,
+  "formula_decoded": "AMIHUD_ILLIQ -> TS_SKEW_10 -> TS_QUANTILE_10 -> TS_ARG_MIN_5 -> TS_MAX_20 -> TS_RANK_10 -> JUMP -> ABS"
+}

@@ -3,11 +3,13 @@ api/services/trading_service.py — 实盘交易服务
 
 支持 paper / live 双模式，含风控、审计日志。
 
-补齐项：
+核心功能：
+  - Delta 差额调仓机制（HOLD / CLOSE / REVERSE / ADJUST），彻底杜绝重复加仓
   - ctVal 精确下单（根据合约面值计算张数）
-  - 下单前 set_leverage
-  - 持仓对冲（反向持仓先平仓再开仓）
-  - 单日亏损风控（MAX_DAILY_LOSS_PCT）
+  - 下单附带交易所硬止损单（attachAlgoOrds）防程序离线裸奔
+  - 下单前自动 set_leverage
+  - 策略安全门禁（实盘过滤负分/退化策略）
+  - 单日亏损风控（MAX_DAILY_LOSS_PCT 超限主动清仓）
   - 运行状态显示（账户/持仓/风控/审计统计）
 """
 import json
@@ -45,7 +47,7 @@ class AuditLog:
         event["is_live"] = Config.is_live()
         with self._lock:
             with open(self.log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(event, ensure_ascii=False) + "\n")
+                f.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
 
     def get_recent(self, n: int = 50) -> list[dict]:
         if not self.log_path.exists():
@@ -79,7 +81,6 @@ class TradingService:
         self._auto_trade_state: dict = {"running": False}
         self._auto_trade_thread = None
         # 交易冷却：记录每个品种最后一次下单时间，防止频繁开平
-        # 2026-07-20: 默认冷却 180 秒（3 根 1m K 线），可根据 bar 周期自动调整
         self._last_order_time: dict[str, float] = {}
         self._cooldown_seconds: int = int(os.getenv("TRADE_COOLDOWN_SECONDS", "180"))
 
@@ -122,7 +123,7 @@ class TradingService:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-        # 尝试获取账户信息（需凭证；paper 模式无凭证时降级）
+        # 尝试获取账户信息
         try:
             summary = get_private_client().get_account_summary()
             status["account"] = summary
@@ -156,6 +157,10 @@ class TradingService:
 
         return status
 
+    def get_audit_log(self, n: int = 50) -> list[dict]:
+        """获取最近审计日志。"""
+        return self.audit.get_recent(n)
+
     # ── 风控辅助 ──────────────────────────────────────────────────────────
 
     def _check_daily_loss(self) -> tuple[bool, str, dict]:
@@ -163,10 +168,7 @@ class TradingService:
 
         逻辑：
           - 跨天重置，记录当日初始权益
-          - 当前权益低于初始权益 × (1 - MAX_DAILY_LOSS_PCT) 时拒绝下单
-
-        Returns:
-            (passed, msg, info)
+          - 当前权益低于初始权益 × (1 - MAX_DAILY_LOSS_PCT) 时拒绝下单并触发清仓
         """
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -216,7 +218,6 @@ class TradingService:
         if inst_id in self._instrument_cache:
             return self._instrument_cache[inst_id]
         try:
-            # 从 inst_id 推断 inst_type
             if "SWAP" in inst_id:
                 inst_type = "SWAP"
             elif "SPOT" in inst_id:
@@ -233,13 +234,7 @@ class TradingService:
             return {}
 
     def _get_pos_mode(self) -> str:
-        """获取账户持仓模式（带缓存）。
-
-        Returns:
-            "net_mode"（单向持仓，posSide 传 net）
-            "long_short_mode"（双向持仓，posSide 传 long/short）
-            默认 "net_mode"（查询失败时安全兜底）
-        """
+        """获取账户持仓模式（带缓存）。"""
         if self._pos_mode_cache is not None:
             return self._pos_mode_cache
         try:
@@ -248,7 +243,6 @@ class TradingService:
             self._pos_mode_cache = mode
             return mode
         except Exception:
-            # 查询失败时默认 net_mode（单向），这是 OKX 模拟盘的默认模式
             self._pos_mode_cache = "net_mode"
             return "net_mode"
 
@@ -261,15 +255,7 @@ class TradingService:
         last_price: float,
         inst_info: dict,
     ) -> tuple[float, float, dict]:
-        """计算目标仓位（张数），基于 ctVal 精确转换。
-
-        OKX SWAP 合约：张数 = 目标价值 / (最新价 × 每张面值 ctVal)
-        例：BTC-USDT-SWAP, ctVal=0.01, 目标价值 3000 USDT, 价格 60000
-            张数 = 3000 / (60000 × 0.01) = 5 张
-
-        Returns:
-            (target_sz, target_value, size_detail)
-        """
+        """计算目标仓位（张数），基于 ctVal 精确转换。"""
         max_position_value = capital * max_position_pct
         target_value = signal * max_position_value * leverage
 
@@ -278,39 +264,33 @@ class TradingService:
         min_sz = float(inst_info.get("minSz", 0)) if inst_info else 0.0
         ct_val_ccy = inst_info.get("ctValCcy", "") if inst_info else ""
 
-        # 张数 = 目标价值 / (最新价 × 每张面值)
         if last_price > 0 and ct_val > 0:
             raw_sz = abs(target_value / (last_price * ct_val))
         else:
             raw_sz = 0.0
 
-        # 按 lotSz 步进取整（用 Decimal 精确计算，避免浮点误差）
         from decimal import Decimal, ROUND_DOWN
         if lot_sz > 0:
             lot_dec = Decimal(str(lot_sz))
             raw_dec = Decimal(str(raw_sz))
-            # 向下取整到 lotSz 的整数倍（避免超出资金）
             steps = (raw_dec / lot_dec).to_integral_value(rounding=ROUND_DOWN)
             target_sz = float(steps * lot_dec)
         else:
             target_sz = round(raw_sz, 4)
 
-        # 格式化 sz 为 OKX 接受的字符串（整数步进返回整数，小数步进按精度）
         if lot_sz >= 1:
             sz_str = str(int(target_sz))
         elif lot_sz > 0:
-            # 计算 lotSz 的小数位数
             lot_str = f"{lot_sz:.10f}".rstrip("0").rstrip(".")
             precision = len(lot_str.split(".")[1]) if "." in lot_str else 0
             sz_str = f"{target_sz:.{precision}f}"
         else:
             sz_str = str(round(target_sz, 4))
 
-        # 最小下单量检查
         below_min = False
         if min_sz > 0 and target_sz < min_sz:
             below_min = True
-            target_sz = 0.0  # 低于最小下单量，不交易
+            target_sz = 0.0
 
         detail = {
             "ct_val": ct_val,
@@ -326,7 +306,36 @@ class TradingService:
         }
         return target_sz, target_value, detail
 
-    # ── 持仓对冲 ──────────────────────────────────────────────────────────
+    # ── 持仓状态与 Delta 调仓 ──────────────────────────────────────────────
+
+    def _get_net_position(self, trade_client: OKXClient, inst_id: str) -> tuple[float, list[dict]]:
+        """获取当前合约的净持仓张数（多为正，空为负，0为无持仓）及原始持仓列表。"""
+        if not Config.is_live():
+            with self._lock:
+                cached = self._position_cache.get(inst_id)
+                if not cached:
+                    return 0.0, []
+                side = cached.get("side", "")
+                sz = float(cached.get("target_sz", 0.0))
+                net_sz = sz if side == "buy" else -sz if side == "sell" else 0.0
+                return net_sz, [cached]
+        try:
+            positions = trade_client.get_positions_detail(inst_id)
+        except Exception:
+            positions = []
+        net_sz = 0.0
+        for p in positions:
+            sz = float(p.get("pos", 0.0))
+            if sz == 0:
+                continue
+            side = p.get("pos_side", "net")
+            if side == "long":
+                net_sz += sz
+            elif side == "short":
+                net_sz -= sz
+            elif side == "net":
+                net_sz += sz
+        return net_sz, positions
 
     def _handle_position_switch(
         self,
@@ -335,38 +344,30 @@ class TradingService:
         new_side: str,
         new_pos_side: str,
     ) -> list[dict]:
-        """处理持仓切换：若已有反向持仓，先平仓再开仓。
-
-        避免双向持仓模式下产生对锁仓。
-
-        Returns:
-            对冲动作列表
-        """
+        """处理持仓切换：若已有反向持仓，先平仓再开仓。"""
         hedge_actions = []
-
         try:
             current_positions = trade_client.get_positions_detail(inst_id)
         except Exception:
             current_positions = []
 
         for pos in current_positions:
-            pos_side = pos["pos_side"]
-            pos_sz = pos["pos"]
+            pos_side = pos.get("pos_side", "net")
+            pos_sz = pos.get("pos", 0.0)
             if pos_sz == 0:
                 continue
 
-            # 判断当前持仓方向
             current_is_long = (pos_side == "long" and pos_sz > 0) or (pos_side == "net" and pos_sz > 0)
             current_is_short = (pos_side == "short" and pos_sz > 0) or (pos_side == "net" and pos_sz < 0)
 
             new_is_long = new_side == "buy"
             new_is_short = new_side == "sell"
 
-            # 反向持仓 → 先平仓
             if (current_is_long and new_is_short) or (current_is_short and new_is_long):
                 try:
                     close_side = pos_side if pos_side != "net" else "net"
                     close_result = trade_client.close_position(inst_id, pos_side=close_side)
+                    trade_client.cancel_algo_orders(inst_id)
                     hedge_actions.append({
                         "action": "close_opposite",
                         "pos_side": pos_side,
@@ -401,39 +402,72 @@ class TradingService:
         bar: str = "1H",
         max_position_pct: float = 0.30,
     ) -> dict:
-        """执行交易信号——获取最新行情、计算信号、下单。
+        """执行交易信号——获取最新行情、计算信号、按 Delta 差额调仓。
 
         安全流程：
-          1. 加载策略 + 获取行情
+          1. 加载策略（实盘门禁：过滤负分/退化策略） + 获取行情
           2. 计算因子 → 仓位信号
-          3. 查询合约信息（ctVal）精确计算张数
-          4. 风控检查（杠杆上限、信号范围、信号阈值、单日亏损）
-          5. 持仓对冲（反向持仓先平仓）
-          6. 设置杠杆 + 下单
-          7. 审计日志记录全程
-
-        Args:
-            strategy_path: 策略 JSON 路径
-            inst_id: 合约 ID
-            capital: 本金 (USDT)
-            leverage: 杠杆
-            bar: K 线周期
-            max_position_pct: 单品种最大仓位占比
-
-        Returns:
-            执行结果
+          3. 查询合约信息（ctVal、lotSz、minSz）精确计算目标张数
+          4. 获取真实持仓，计算调仓差额 Delta
+          5. 风控检查（杠杆上限、信号范围、信号阈值、单日亏损、冷却时间）
+          6. Delta 状态机：HOLD（维持不重复加仓）、CLOSE（平仓）、REVERSE（反转）、ADJUST（差额增减）
+          7. 自动附带交易所硬止损单（attachAlgoOrds）防程序离线裸奔
+          8. 审计日志记录全程
         """
         # 风控：杠杆上限
         leverage = min(leverage, Config.MAX_LEVERAGE)
 
-        # 1. 加载策略（支持单因子策略与组合策略）
+        # 1. 加载策略
         strategy = load_strategy(strategy_path)
         formula = strategy.get("formula")
         formula_decoded = strategy.get("formula_decoded", "")
+        best_score = strategy.get("best_score")
+
+        # 策略质量安全门禁：实盘模式下禁止运行评分 <= 0 的策略
+        if Config.is_live() and (best_score is None or best_score <= 0):
+            risk_checks = [{
+                "check": "strategy_quality",
+                "passed": False,
+                "msg": f"策略评分过低 ({best_score} <= 0)，禁止在实盘模式下执行，请先重新训练",
+            }]
+            order_result = {
+                "skipped": True,
+                "reason": f"策略评分过低 ({best_score} <= 0)，禁止在实盘模式下执行",
+            }
+            audit_event = {
+                "event": "signal_execution",
+                "inst_id": inst_id,
+                "strategy": formula_decoded,
+                "bar": bar,
+                "signal": 0.0,
+                "action": "拒绝执行",
+                "risk_checks": risk_checks,
+                "risk_passed": False,
+                "order": order_result,
+            }
+            self.audit.log(audit_event)
+            return {
+                "inst_id": inst_id,
+                "bar": bar,
+                "last_price": 0.0,
+                "signal": 0.0,
+                "action": "拒绝执行",
+                "target_sz": 0.0,
+                "target_value": 0.0,
+                "side": "",
+                "risk_checks": risk_checks,
+                "risk_passed": False,
+                "order": order_result,
+                "mode": Config.TRADING_MODE,
+                "is_live": Config.is_live(),
+                "strategy": {
+                    "formula": formula,
+                    "formula_decoded": formula_decoded,
+                    "best_score": best_score,
+                },
+            }
 
         # 2. 获取行情（自动分页、升序、只含已收盘 K 线）
-        #    旧实现 get_candles(limit=300) 返回倒序且含未收盘 bar，
-        #    导致信号基于时间倒序的序列计算——实盘信号完全失真。
         min_bars = getattr(Config, "REALTIME_MIN_BARS", 800)
         client = get_public_client()
         candles = client.get_recent_candles(inst_id, bar, total=min_bars, only_confirmed=True)
@@ -475,7 +509,7 @@ class TradingService:
 
         # 3.5 因子诊断信息
         from strategy_manager.signal import LOWER_BAND, UPPER_BAND
-        factor_val = float(factor[0, -1].item()) if factor.dim() >= 2 else float(factor[-1].item())
+        factor_val = float(factor[0, -1].item()) if hasattr(factor, 'dim') and callable(factor.dim) and factor.dim() >= 2 else float(factor[-1].item())
         tanh_val = float(torch.tanh(torch.tensor(factor_val)).item())
         signal_diag = {
             "factor": round(factor_val, 6),
@@ -490,10 +524,12 @@ class TradingService:
             "feat_shape": list(feat.shape) if hasattr(feat, 'shape') else None,
         }
 
-        # 3.6 参数一致性检查（2026-07-20 新增）
-        # 策略训练时使用 1H 周期 + 10000 本金 + 5x 杠杆，
-        # 如果实盘使用不同参数，会在审计日志中记录警告
+        # 3.6 参数一致性与因子方差健康度检查
         param_warnings = []
+        recent_std = float(factor[0, -min(200, factor.shape[1]):].std().item()) if factor.numel() > 0 else 0.0
+        signal_diag["recent_std"] = round(recent_std, 6)
+        if recent_std < 1e-4:
+            param_warnings.append(f"策略因子在最近周期几乎无波动 (std={recent_std:.6f} < 1e-4)，策略已进入常数退化状态")
         if bar != "1H":
             param_warnings.append(f"K线周期 {bar} ≠ 训练周期 1H（信号分布可能不同）")
         if leverage != Config.DEFAULT_LEVERAGE:
@@ -503,32 +539,41 @@ class TradingService:
         if max_position_pct > 0.50:
             param_warnings.append(f"仓位占比 {max_position_pct:.0%} 过高（单笔风险过大）")
 
-        # 4. 查询合约信息 + 精确计算张数
+        # 4. 查询合约信息 + 计算目标仓位张数与 Delta 差额
         inst_info = self._get_instrument_info(inst_id)
-        target_sz, target_value, size_detail = self._compute_target_size(
+        raw_target_sz, target_value, size_detail = self._compute_target_size(
             signal, capital, max_position_pct, leverage, last_price, inst_info
         )
-        side = "buy" if signal > 0 else "sell" if signal < 0 else ""
-        # 根据账户持仓模式决定 posSide：
-        #   net_mode（单向持仓）→ 始终传 "net"
-        #   long_short_mode（双向持仓）→ 传 "long"/"short"
-        pos_mode = self._get_pos_mode()
-        if pos_mode == "net_mode":
-            pos_side = "net"
-        else:
-            pos_side = "long" if signal > 0 else "short" if signal < 0 else "net"
 
-        # 4.5 获取实际账户余额（用于保证金检查）
+        lot_sz = float(inst_info.get("lotSz", 1.0)) if inst_info else 1.0
+        min_sz = float(inst_info.get("minSz", 0.0)) if inst_info else 0.0
+        step_sz = max(lot_sz, min_sz, 1e-6)
+
+        # 计算目标净持仓（多为正，空为负，平仓/低于最小量为0）
+        if abs(signal) < 0.05 or raw_target_sz <= 0 or size_detail.get("below_min"):
+            target_held_sz = 0.0
+        elif signal > 0:
+            target_held_sz = raw_target_sz
+        else:
+            target_held_sz = -raw_target_sz
+
+        trade_client = get_private_client()
+        net_current_sz, current_positions = self._get_net_position(trade_client, inst_id)
+        delta_sz = target_held_sz - net_current_sz
+
+        pos_mode = self._get_pos_mode()
+
+        # 4.5 获取账户余额（用于保证金检查）
         account_eq = None
         account_avail = None
         try:
-            acct = get_private_client().get_account_summary()
+            acct = trade_client.get_account_summary()
             account_eq = acct.get("total_eq")
             account_avail = acct.get("avail_bal")
         except Exception:
             pass
 
-        # 5. 风控检查（6 项）
+        # 5. 风控检查
         risk_checks = []
         risk_passed = True
 
@@ -546,16 +591,12 @@ class TradingService:
         else:
             risk_checks.append({"check": "signal_range", "passed": True, "msg": f"信号 {signal:.2f} 在范围内"})
 
-        # 5.3 信号阈值
-        if abs(signal) < 0.05:
-            risk_checks.append({"check": "signal_threshold", "passed": False, "msg": f"信号 {signal:.2f} 低于交易阈值 0.05"})
-            risk_passed = False
-        else:
-            risk_checks.append({"check": "signal_threshold", "passed": True, "msg": f"信号 {signal:.2f} ≥ 0.05"})
-
-        # 5.3.5 交易冷却检查（2026-07-20 新增）
-        # 距离上次下单不足 cooldown_seconds 秒时跳过，防止高频无效交易
-        if risk_passed and side:
+        # 5.3 交易冷却检查（仅在需要调仓下单时检查）
+        needs_order = not (
+            (target_held_sz == 0.0 and abs(net_current_sz) == 0.0)
+            or (abs(delta_sz) < step_sz and target_held_sz * net_current_sz > 0)
+        )
+        if risk_passed and needs_order:
             last_t = self._last_order_time.get(inst_id, 0)
             elapsed = time.time() - last_t
             if elapsed < self._cooldown_seconds:
@@ -572,32 +613,35 @@ class TradingService:
                     "msg": f"冷却已过：距上次下单 {elapsed:.0f}s ≥ {self._cooldown_seconds}s",
                 })
 
-        # 5.4 单日亏损风控
+        # 5.4 单日亏损风控（若超限则拒绝开仓，并主动清仓保护）
         daily_passed, daily_msg, daily_info = self._check_daily_loss()
         risk_checks.append({"check": "daily_loss", "passed": daily_passed, "msg": daily_msg, "info": daily_info})
         if not daily_passed:
             risk_passed = False
+            if abs(net_current_sz) > 0:
+                try:
+                    close_res = self.close_position(inst_id)
+                    self.audit.log({
+                        "event": "daily_risk_liquidation",
+                        "inst_id": inst_id,
+                        "reason": f"单日亏损超限触发清仓: {daily_msg}",
+                        "close_result": close_res,
+                    })
+                except Exception as e:
+                    self.audit.log({
+                        "event": "daily_risk_liquidation_error",
+                        "inst_id": inst_id,
+                        "error": str(e),
+                    })
 
-        # 5.5 最小下单量检查
-        if risk_passed and target_sz == 0 and abs(signal) >= 0.05:
-            if size_detail.get("below_min"):
-                risk_checks.append({"check": "min_size", "passed": False, "msg": f"计算张数 {size_detail['raw_sz']} 低于最小下单量 {size_detail['min_sz']}"})
-                risk_passed = False
-            else:
-                risk_checks.append({"check": "min_size", "passed": False, "msg": "目标张数为 0"})
-                risk_passed = False
-        else:
-            risk_checks.append({"check": "min_size", "passed": True, "msg": f"目标张数 {target_sz}（{size_detail['note']}）"})
-
-        # 5.6 保证金充足性检查（live 模式）
-        if risk_passed and side and account_avail is not None:
-            # 所需保证金 = 目标价值 / 杠杆
+        # 5.5 保证金充足性检查
+        if risk_passed and target_held_sz != 0 and account_avail is not None:
             required_margin = abs(target_value) / leverage if leverage > 0 else abs(target_value)
-            if account_avail < required_margin:
+            if account_avail < required_margin and abs(delta_sz) > 0:
                 risk_checks.append({
                     "check": "margin_sufficiency",
                     "passed": False,
-                    "msg": f"可用余额 {account_avail:.2f} USDT < 所需保证金 {required_margin:.2f} USDT（目标价值 {abs(target_value):.2f} / 杠杆 {leverage}）",
+                    "msg": f"可用余额 {account_avail:.2f} USDT < 所需保证金 {required_margin:.2f} USDT",
                 })
                 risk_passed = False
             else:
@@ -606,28 +650,52 @@ class TradingService:
                     "passed": True,
                     "msg": f"可用余额 {account_avail:.2f} USDT ≥ 所需保证金 {required_margin:.2f} USDT",
                 })
-        elif risk_passed and side:
-            risk_checks.append({
-                "check": "margin_sufficiency",
-                "passed": True,
-                "msg": "无法获取账户余额，保证金检查跳过",
-            })
 
-        # 6. 执行交易
+        # 6. Delta 状态机执行调仓
         order_result = None
         hedge_actions = []
         leverage_result = None
+        executed_side = ""
 
-        if risk_passed and side:
-            trade_client = get_private_client()
-
-            # 6.1 持仓对冲（反向持仓先平仓）
-            hedge_actions = self._handle_position_switch(trade_client, inst_id, side, pos_side)
-
-            # 6.2 设置杠杆（live 模式实际调用，paper 模式返回模拟确认）
-            # net_mode 下不传 posSide（OKX 单向持仓模式不支持 posSide 参数）
+        if not risk_passed:
+            order_result = {
+                "skipped": True,
+                "reason": "风控未通过",
+                "signal": round(signal, 4),
+            }
+        elif target_held_sz == 0.0 and abs(net_current_sz) > 0:
+            # 状态 1: 平仓 (CLOSE)
+            close_res = self.close_position(inst_id)
+            order_result = {
+                "action": "CLOSE",
+                "reason": f"目标持仓为 0，平掉当前持仓 ({net_current_sz:.4f})",
+                "close_result": close_res,
+                "live": Config.is_live(),
+            }
+            with self._lock:
+                self._position_cache.pop(inst_id, None)
+                self._last_order_time[inst_id] = time.time()
+        elif target_held_sz == 0.0 and abs(net_current_sz) == 0:
+            # 状态 2: 保持空仓 (FLAT)
+            order_result = {
+                "action": "HOLD",
+                "skipped": True,
+                "reason": "当前无持仓且目标为空仓",
+                "live": False,
+            }
+        elif abs(delta_sz) < step_sz and (target_held_sz * net_current_sz > 0):
+            # 状态 3: 维持现有持仓 (HOLD) —— 关键修复：同向不重复开仓！
+            order_result = {
+                "action": "HOLD",
+                "skipped": True,
+                "reason": f"持仓 ({net_current_sz:.4f}) 已达到目标 ({target_held_sz:.4f})，维持现有持仓",
+                "live": False,
+            }
+        else:
+            # 状态 4: 发送调仓订单（开新仓、反转、或增减仓）
+            # 4.1 设置杠杆
             try:
-                lev_pos_side = pos_side if (Config.is_live() and pos_mode != "net_mode") else ""
+                lev_pos_side = "" if pos_mode == "net_mode" else ("long" if target_held_sz > 0 else "short")
                 leverage_result = trade_client.set_leverage(
                     inst_id, lever=leverage, mgn_mode="cross",
                     pos_side=lev_pos_side,
@@ -635,55 +703,85 @@ class TradingService:
             except Exception as e:
                 leverage_result = {"error": str(e)}
 
-            # 6.3 下单
-            # sz 格式化字符串（按 lotSz 精度）
-            sz_to_send = size_detail.get("sz_str", str(round(target_sz, 6)))
-            # sz 合法性预检：sz=0 或低于最小下单量时跳过，避免无意义的 OKX 请求
-            if target_sz <= 0 or size_detail.get("below_min"):
+            # 4.2 计算具体调仓量与方向
+            # 若反转持仓 (由多翻空或由空翻多)：先全平旧仓位，再按目标全量开新仓
+            if net_current_sz * target_held_sz < 0:
+                close_res = self.close_position(inst_id)
+                hedge_actions.append({"action": "reverse_close", "result": close_res})
+                order_sz = abs(target_held_sz)
+                order_side = "buy" if target_held_sz > 0 else "sell"
+                order_pos_side = "long" if target_held_sz > 0 else "short"
+            elif net_current_sz == 0:
+                order_sz = abs(target_held_sz)
+                order_side = "buy" if target_held_sz > 0 else "sell"
+                order_pos_side = "long" if target_held_sz > 0 else "short"
+            else:
+                # 同向增减仓
+                order_sz = abs(delta_sz)
+                order_side = "buy" if delta_sz > 0 else "sell"
+                order_pos_side = "long" if net_current_sz > 0 else "short"
+
+            executed_side = order_side
+            if pos_mode == "net_mode":
+                order_pos_side = "net"
+
+            # 4.3 交易所硬止损价（固定 3% 止损保护）
+            STOP_LOSS_PCT = 0.03
+            if order_side == "buy":
+                sl_price = last_price * (1.0 - STOP_LOSS_PCT)
+            else:
+                sl_price = last_price * (1.0 + STOP_LOSS_PCT)
+            tick_sz = float(inst_info.get("tickSz", 0.01)) if inst_info else 0.01
+            tick_dec = len(str(tick_sz).split(".")[1]) if "." in str(tick_sz) else 2
+            sl_price_str = f"{sl_price:.{tick_dec}f}"
+
+            # 4.4 格式化下单数量 sz
+            if lot_sz >= 1:
+                sz_str = str(int(order_sz))
+            elif lot_sz > 0:
+                lot_precision = len(f"{lot_sz:.10f}".rstrip("0").split(".")[1]) if "." in f"{lot_sz:.10f}".rstrip("0") else 0
+                sz_str = f"{order_sz:.{lot_precision}f}"
+            else:
+                sz_str = str(round(order_sz, 4))
+
+            if order_sz < min_sz or order_sz <= 0:
                 order_result = {
                     "skipped": True,
-                    "reason": f"sz={sz_to_send} 无效或低于最小下单量 minSz={size_detail.get('min_sz', '?')}",
-                    "size_detail": size_detail,
+                    "reason": f"调仓量 {sz_str} 低于最小下单量 minSz={min_sz}",
                     "live": False,
                 }
             else:
-                # clOrdId 只允许字母和数字（OKX 规则），不能含 _ - 等特殊字符
                 inst_clean = ''.join(c for c in inst_id if c.isalnum())[:8]
                 cl_ord_id = f"ap{int(time.time())}{inst_clean}"
                 order_result = trade_client.place_order(
                     inst_id=inst_id,
-                    side=side,
-                    pos_side=pos_side if Config.is_live() else "net",
+                    side=order_side,
+                    pos_side=order_pos_side,
                     ord_type="market",
-                    sz=sz_to_send,
+                    sz=sz_str,
                     td_mode="cross",
                     cl_ord_id=cl_ord_id,
+                    sl_trigger_px=sl_price_str,
                 )
 
-            # 更新持仓缓存
-            with self._lock:
-                self._position_cache[inst_id] = {
-                    "inst_id": inst_id,
-                    "side": side,
-                    "pos_side": pos_side,
-                    "signal": round(signal, 4),
-                    "target_sz": round(target_sz, 6),
-                    "target_value": round(target_value, 2),
-                    "entry_price": last_price,
-                    "capital": capital,
-                    "leverage": leverage,
-                    "time": int(time.time()),
-                    "simulated": not Config.is_live(),
-                    "size_detail": size_detail,
-                }
-                # 更新交易冷却时间戳
-                self._last_order_time[inst_id] = time.time()
-        else:
-            order_result = {
-                "skipped": True,
-                "reason": "风控未通过或信号过弱",
-                "signal": round(signal, 4),
-            }
+                # 更新持仓缓存
+                with self._lock:
+                    self._position_cache[inst_id] = {
+                        "inst_id": inst_id,
+                        "side": order_side,
+                        "pos_side": order_pos_side,
+                        "signal": round(signal, 4),
+                        "target_sz": round(target_held_sz, 6),
+                        "target_value": round(target_value, 2),
+                        "entry_price": last_price,
+                        "stop_loss_price": sl_price_str,
+                        "capital": capital,
+                        "leverage": leverage,
+                        "time": int(time.time()),
+                        "simulated": not Config.is_live(),
+                        "size_detail": size_detail,
+                    }
+                    self._last_order_time[inst_id] = time.time()
 
         # 7. 审计日志
         audit_event = {
@@ -694,9 +792,9 @@ class TradingService:
             "last_price": last_price,
             "signal": round(signal, 4),
             "action": signal_to_action(signal),
-            "target_sz": round(target_sz, 6),
-            "target_value": round(target_value, 2),
-            "side": side,
+            "current_held_sz": round(net_current_sz, 6),
+            "target_held_sz": round(target_held_sz, 6),
+            "delta_sz": round(delta_sz, 6),
             "capital": capital,
             "leverage": leverage,
             "max_position_pct": max_position_pct,
@@ -716,9 +814,10 @@ class TradingService:
             "last_price": last_price,
             "signal": round(signal, 4),
             "action": signal_to_action(signal),
-            "target_sz": round(target_sz, 6),
-            "target_value": round(target_value, 2),
-            "side": side,
+            "current_held_sz": round(net_current_sz, 6),
+            "target_held_sz": round(target_held_sz, 6),
+            "delta_sz": round(delta_sz, 6),
+            "side": executed_side,
             "size_detail": size_detail,
             "signal_diag": signal_diag,
             "risk_checks": risk_checks,
@@ -732,26 +831,27 @@ class TradingService:
             "strategy": {
                 "formula": formula,
                 "formula_decoded": formula_decoded,
+                "best_score": best_score,
             },
         }
 
     def close_position(self, inst_id: str) -> dict:
-        """平仓。"""
+        """平仓并撤销止损单。"""
         trade_client = get_private_client()
 
-        # 查询当前持仓以获取 pos_side
         pos_side_to_close = "net"
         try:
             positions = trade_client.get_positions_detail(inst_id)
             if positions:
                 for p in positions:
-                    if p["pos"] != 0:
-                        pos_side_to_close = p["pos_side"]
+                    if p.get("pos", 0) != 0:
+                        pos_side_to_close = p.get("pos_side", "net")
                         break
         except Exception:
             pass
 
         result = trade_client.close_position(inst_id, pos_side=pos_side_to_close)
+        trade_client.cancel_algo_orders(inst_id)
 
         with self._lock:
             self._position_cache.pop(inst_id, None)
@@ -787,11 +887,20 @@ class TradingService:
         max_position_pct: float = 0.30,
         interval_seconds: int = 3600,
     ) -> dict:
-        """启动自动交易——按固定间隔循环执行信号。
+        """启动自动交易——按固定间隔循环执行信号。"""
+        # 实盘安全门禁：检查策略分数
+        if Config.is_live():
+            try:
+                st = load_strategy(strategy_path)
+                score = st.get("best_score")
+                if score is None or score <= 0:
+                    return {
+                        "ok": False,
+                        "msg": f"拒绝启动实盘：策略评分过低 ({score} <= 0)，请先重新训练出正期望收益策略",
+                    }
+            except Exception as e:
+                return {"ok": False, "msg": f"加载策略失败: {e}"}
 
-        Args:
-            interval_seconds: 执行间隔（秒），默认 3600=1小时
-        """
         with self._lock:
             if self._auto_trade_state.get("running"):
                 return {"ok": False, "msg": "自动交易已在运行中，请先停止"}
@@ -809,9 +918,7 @@ class TradingService:
                 "total_executions": 0,
                 "total_orders": 0,
                 "total_skips": 0,
-                # 信号统计
                 "signal_stats": {"long": 0, "short": 0, "flat": 0, "skip": 0, "error": 0},
-                # 最近 N 次信号历史（最新的在最前）
                 "signal_history": [],
                 "last_result": None,
                 "last_error": None,
@@ -867,7 +974,7 @@ class TradingService:
             # 等待到下一次执行时间
             now = time.time()
             if now < next_time:
-                sleep_sec = min(next_time - now, 5)  # 最多睡 5 秒，以便及时响应停止
+                sleep_sec = min(next_time - now, 5)
                 time.sleep(sleep_sec)
                 continue
 
@@ -921,7 +1028,8 @@ class TradingService:
                         "signal": round(signal, 4) if signal is not None else 0,
                         "action": action,
                         "price": result.get("last_price"),
-                        "target_sz": result.get("target_sz"),
+                        "target_sz": result.get("target_held_sz", result.get("target_sz")),
+                        "delta_sz": result.get("delta_sz", 0.0),
                         "ordered": ordered,
                         "skipped": skipped,
                         "risk_passed": risk_passed,

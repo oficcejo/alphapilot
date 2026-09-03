@@ -137,9 +137,17 @@ def _is_degenerate_formula(formula: list[int]) -> tuple[bool, str]:
 
     from .vocab import FORMULA_VOCAB
     from .ops import OPS_CONFIG
+    from .vm import POSITIVE_ONLY_OPS, ARG_INDEX_OPS, EXTREME_OPS
 
     feat_offset = FORMULA_VOCAB.operator_offset
     op_names = FORMULA_VOCAB.token_names  # 包含特征+算子的完整名称表
+
+    # 检查末尾算子：禁止以恒正算子结束（防止纯多头 Beta 退化）
+    last_t = int(formula[-1])
+    if last_t >= feat_offset:
+        last_name = op_names[last_t] if last_t < len(op_names) else ""
+        if last_name in POSITIVE_ONLY_OPS:
+            return True, f"公式以恒正算子 {last_name} 结束，值域恒非负导致单边多头退化"
 
     # 构建算子 arity 映射
     op_arity = {}
@@ -204,6 +212,14 @@ def _is_degenerate_formula(formula: list[int]) -> tuple[bool, str]:
                 # IF_GT(X, X, X) — 三个操作数全相同
                 if args[0] == args[1] == args[2]:
                     return True, f"IF_GT(X,X,X) 退化：三操作数相同"
+
+            # 检测位置算子 + 极值/排名算子级联导致方差坍塌
+            if op_name in EXTREME_OPS:
+                for a in args:
+                    if len(a) > 0 and a[-1] >= feat_offset:
+                        prev_op = op_names[a[-1]] if a[-1] < len(op_names) else ""
+                        if prev_op in ARG_INDEX_OPS:
+                            return True, f"位置算子 {prev_op} 后接极值算子 {op_name}，导致方差坍塌"
 
             # 合并来源（新元素的来源是所有参数的并集）
             merged = []

@@ -1,6 +1,74 @@
 [
   {
-    "strategy": "D:/www/okx/okx-alpha-pilot/strategies/best_ETH-USDT-SWAP.json",
-    "error": "未找到匹配的数据文件"
+    "strategy": "best_ETH-USDT-SWAP_5m.json",
+    "data": "ETH-USDT-SWAP_5m.parquet",
+    "bars": 2000,
+    "periods_per_year": 105192,
+    "long_pct": 64.1,
+    "short_pct": 0.1,
+    "segments": {
+      "full": {
+        "bars": 2000,
+        "total_return_pct": -1.87,
+        "cagr_pct": -62.92,
+        "sortino": -3.077,
+        "sharpe": -2.771,
+        "max_drawdown_pct": 6.61,
+        "win_rate_pct": 49.4,
+        "exposure_pct": 63.9,
+        "avg_turnover": 0.002
+      },
+      "first_half": {
+        "bars": 1000,
+        "total_return_pct": -0.93,
+        "cagr_pct": -62.4,
+        "sortino": -2.836,
+        "sharpe": -3.534,
+        "max_drawdown_pct": 5.02,
+        "win_rate_pct": 49.7,
+        "exposure_pct": 48.6,
+        "avg_turnover": 0.001
+      },
+      "second_half": {
+        "bars": 1000,
+        "total_return_pct": -0.95,
+        "cagr_pct": -63.43,
+        "sortino": -3.339,
+        "sharpe": -2.373,
+        "max_drawdown_pct": 5.05,
+        "win_rate_pct": 49.2,
+        "exposure_pct": 79.2,
+        "avg_turnover": 0.003
+      },
+      "last_20pct": {
+        "bars": 400,
+        "total_return_pct": -0.04,
+        "cagr_pct": -10.61,
+        "sortino": -0.324,
+        "sharpe": -0.28,
+        "max_drawdown_pct": 2.66,
+        "win_rate_pct": 49.7,
+        "exposure_pct": 48.8,
+        "avg_turnover": 0.0075
+      }
+    },
+    "cost_stress_last20": {
+      "1x": {
+        "total_return_pct": -0.04,
+        "sortino": -0.324
+      },
+      "2x": {
+        "total_return_pct": -0.28,
+        "sortino": -2.112
+      },
+      "3x": {
+        "total_return_pct": -0.52,
+        "sortino": -3.755
+      }
+    },
+    "flags": [
+      "前后半段收益不同号为正：策略只在特定市场环境有效",
+      "尾段 20% Sortino ≤ 0：近期已失效"
+    ]
   }
 ]

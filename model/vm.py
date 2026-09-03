@@ -60,17 +60,21 @@ def is_sign_restoring(token_name: str) -> bool:
     return token_name in SIGN_RESTORE_OPS
 
 
+# 位置算子集：输出极值时间索引 [0, 1]，后接极值/排名算子时极易坍塌为常数
+ARG_INDEX_OPS = {"TS_ARG_MIN_5", "TS_ARG_MAX_5"}
+EXTREME_OPS = {
+    "TS_MAX_10", "TS_MAX_20", "TS_MIN_10", "TS_MIN_20",
+    "TS_RANK_5", "TS_RANK_10", "TS_RANK_20",
+}
+
+
 def validate_formula_structure(formula_tokens: list[int], vocab_names: tuple[str, ...]) -> list[str]:
     """校验公式结构，返回违规原因列表（空列表 = 合法）。
     
-    使用「感染模型」：一旦公式中出现恒正算子（如 TS_RANK），
-    后续如果连续使用传播算子（如 TS_SUM/TS_MEAN/CLIP/SQRT），
-    值域会一直保持非负，导致因子退化成 beta。
-    只有恢复算子（如 SUB/TS_ZSCORE/CS_NEUTRALIZE）才能打破感染。
-    
-    规则：
-    1. 禁止恒正算子后连续 2 个以上传播算子（感染链太长）
-    2. 公式末尾如果是感染状态（恒正且未恢复），标记违规
+    使用「感染模型」与「方差坍塌检测」：
+    1. 恒正感染链控制：禁止过度传播导致退化为 beta
+    2. 禁止恒正算子（如 ABS/TS_RANK）作为公式最终算子，避免值域非负丢失做空能力
+    3. 禁止 TS_ARG_MIN/MAX 直接接 TS_MAX/MIN/RANK，避免方差归零退化为常数
     """
     violations = []
     feat_offset = FORMULA_VOCAB.operator_offset
@@ -78,13 +82,22 @@ def validate_formula_structure(formula_tokens: list[int], vocab_names: tuple[str
     infected = False  # 当前值域是否已被感染（恒正）
     infected_chain_len = 0  # 感染链长度
     last_positive_op = None  # 最后一个引发感染的算子名
+    last_op_name = None  # 上一个算子名
     
     for i, token in enumerate(formula_tokens):
         token = int(token)
         if token < feat_offset:
             # 特征 token：不改变感染状态
+            last_op_name = vocab_names[token] if token < len(vocab_names) else f"feat_{token}"
             continue
         name = vocab_names[token] if token < len(vocab_names) else f"op_{token}"
+        
+        # 规则A：方差坍塌防御：位置算子后直接接极值/排名算子
+        if last_op_name in ARG_INDEX_OPS and name in EXTREME_OPS:
+            violations.append(
+                f"步骤{i}: 位置算子 {last_op_name} 后直接使用 {name}，"
+                f"窗口内极值概率趋近于1，将导致因子方差坍塌为常数"
+            )
         
         if is_positive_only_op(name):
             # 恒正算子：开始/延续感染
@@ -102,19 +115,21 @@ def validate_formula_structure(formula_tokens: list[int], vocab_names: tuple[str
         elif infected and is_infected_propagating(name):
             # 传播算子：感染继续
             infected_chain_len += 1
-            # 规则1：感染链超过 3 个算子时报警
-            if infected_chain_len >= 3:
+            # 规则1：感染链超过 2 个算子时报警
+            if infected_chain_len >= 2:
                 violations.append(
                     f"步骤{i}: 恒正感染链过长（从 {last_positive_op} 起 {infected_chain_len} 个传播算子），"
                     f"因子将退化为 beta"
                 )
         # else: 非感染相关算子（如 ADD/MUL），不改变感染状态
+
+        last_op_name = name
     
-    # 规则2：公式末尾处于感染状态
-    if infected and infected_chain_len >= 2:
+    # 规则2：公式末尾如果是感染状态（恒正且未恢复）
+    if infected:
         violations.append(
-            f"公式末尾处于恒正感染状态（链长 {infected_chain_len}），"
-            f"因子输出将偏向单方向"
+            f"公式末尾处于恒正状态（以 {last_op_name} 结束），"
+            f"因子输出恒为非负，将退化为纯多头且无法产生做空信号"
         )
     
     return violations
@@ -172,10 +187,10 @@ class StackVM:
         """
         N, T = x.shape
 
-        # 检测是否是全局常数（标准化无意义，x.std() 是统计量非时间依赖）
+        # 检测是否是全局常数（标准化无意义，强制归零中性化，防止伪信号）
         global_std = x.std()
         if global_std < 1e-6:
-            return x   # 常数因子，由 engine 的 const_cnt 拦截
+            return torch.zeros_like(x)
 
         # ── 截面标准化（跨品种，每时间步；N=1 时跳过）──────────────
         # cs_std 沿 N 维计算，t 时刻的 cs_std 只用 {x[n, t] : n}，无未来信息
@@ -203,8 +218,13 @@ class StackVM:
         padded = torch.nn.functional.pad(x, (_ROLL_WINDOW - 1, 0), value=0.0)  # [N, T+W-1]
         windows = padded.unfold(1, _ROLL_WINDOW, 1)  # [N, T, W]
         ts_mean = windows.mean(dim=2)       # [N, T]
-        ts_std = windows.std(dim=2).clamp(min=1e-8)  # [N, T]
+        raw_std = windows.std(dim=2)        # [N, T]
+        ts_std = raw_std.clamp(min=1e-8)    # [N, T]
         ts_z = (x - ts_mean) / ts_std       # [N, T]
+
+        # 常数窗口置 0：当局部窗口标准差低于 1e-4 时，表明该窗口内因子基本恒定无波动，强制中性化
+        flat_mask = raw_std < 1e-4
+        ts_z[flat_mask] = 0.0
 
         # warm-up 期（前 _ROLL_WINDOW-1 根）输出 0（因子中性，不出信号）
         warmup_mask = torch.arange(T, device=x.device) < (_ROLL_WINDOW - 1)
