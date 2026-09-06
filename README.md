@@ -386,7 +386,6 @@ ETH-USDT       训练 9000 步        选择数据          OKX 实时          
 | `OKX_API_PASSPHRASE` | `""` | `OKX_API_PASSPHRASE` | OKX Passphrase |
 | `OKX_API_BASE` | `https://www.okx.com` | `OKX_API_BASE` | OKX API 基础 URL |
 | `OKX_API_SIMULATED` | `True` | `OKX_SIMULATED` | 是否模拟盘 |
-| `OKX_BROKER_TAG` | `c314b0aecb5bBCDE` | `OKX_BROKER_TAG` | 经纪商标识 |
 | `DEFAULT_CAPITAL` | `10000.0` | — | 默认本金 (USDT) |
 | `DEFAULT_LEVERAGE` | `5` | — | 默认杠杆 |
 | `MAX_LEVERAGE` | `20` | — | 最大杠杆 |
@@ -501,16 +500,6 @@ python run.py --reload
 5. 系统会在每笔订单前进行风控检查，并在审计日志中记录
 
 **警告**：实盘交易会发送真实订单，可能导致真实资金损失。
-</details>
-
-<details>
-<summary><b>Q: 如何移除经纪商标识？</b></summary>
-
-在 `.env` 中设置：
-```ini
-OKX_BROKER_TAG=
-```
-这会清空经纪商标识，订单中将不再携带此标签。
 </details>
 
 <details>
