@@ -82,6 +82,34 @@ const App = {
       const modeClass = sys.is_live ? 'live' : 'paper';
 
       el.innerHTML = `
+        <div class="card github-banner mb-6" style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.85) 0%, rgba(15, 23, 42, 0.95) 100%); border: 1px solid rgba(59, 130, 246, 0.35); box-shadow: 0 4px 20px rgba(0,0,0,0.25);">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">
+            <div style="display:flex;align-items:center;gap:16px;">
+              <div style="width:46px;height:46px;border-radius:12px;background:rgba(59,130,246,0.15);display:flex;align-items:center;justify-content:center;color:#60a5fa;flex-shrink:0;">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+              </div>
+              <div>
+                <div style="font-size:16px;font-weight:700;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                  ⚡ OKX AlphaPilot 开源量化研究与交易中枢
+                  <span style="font-size:11px;background:rgba(234,179,8,0.15);color:#facc15;padding:2px 8px;border-radius:999px;border:1px solid rgba(234,179,8,0.3);">Open Source</span>
+                </div>
+                <div style="font-size:13px;color:#94a3b8;margin-top:4px;">
+                  因果防未来函数因子挖掘 + OKX 毫秒级实盘 Delta 调仓。欢迎前往 GitHub 点个 <strong>Star ⭐</strong> 支持开源项目！
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <a href="https://github.com/oficcejo/alphapilot" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg, #2563eb, #1d4ed8);text-decoration:none;padding:9px 18px;font-size:13px;font-weight:600;border-radius:8px;box-shadow:0 0 15px rgba(37,99,235,0.4);">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.784 1.399 8.163-7.333-3.855-7.333 3.855 1.399-8.163-5.934-5.784 8.2-1.192zm0 5.702l-2.232 4.523-4.991.725 3.612 3.521-.852 4.968 4.463-2.347 4.463 2.347-.852-4.968 3.612-3.521-4.991-.725z"/></svg>
+                GitHub Star ⭐
+              </a>
+              <a href="https://github.com/oficcejo/alphapilot/issues" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;padding:9px 14px;font-size:13px;border-radius:8px;background:rgba(255,255,255,0.05);color:#cbd5e1;border:1px solid rgba(255,255,255,0.1);">
+                💬 提 Issue / 建议
+              </a>
+            </div>
+          </div>
+        </div>
+
         <div class="grid-4 mb-6">
           <div class="stat-card">
             <div class="stat-label">交易模式</div>
