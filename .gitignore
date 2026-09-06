@@ -34,3 +34,11 @@ diagnose_output.txt
 
 # Logs
 *.log
+
+# Packaging & Releases
+packaging/
+build/
+dist/
+*.spec
+*.zip
+

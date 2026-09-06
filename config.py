@@ -5,20 +5,39 @@ config.py — 全局配置（根目录 Config 类）
 模型层参数见 model/config.py 的 ModelConfig。
 """
 import os
+import sys
 import pathlib
 from dotenv import load_dotenv
 
-load_dotenv()
 
 # ── 路径 ──────────────────────────────────────────────────────────────────
-BASE_DIR = pathlib.Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    # PyInstaller 打包环境：根目录以可执行文件所在目录为准
+    BASE_DIR = pathlib.Path(sys.executable).resolve().parent
+    # web 静态文件优先在 sys._MEIPASS 或 exe 旁
+    if hasattr(sys, "_MEIPASS") and (pathlib.Path(sys._MEIPASS) / "web").exists():
+        WEB_DIR = pathlib.Path(sys._MEIPASS) / "web"
+    elif (BASE_DIR / "web").exists():
+        WEB_DIR = BASE_DIR / "web"
+    else:
+        WEB_DIR = BASE_DIR / "_internal" / "web"
+else:
+    BASE_DIR = pathlib.Path(__file__).resolve().parent
+    WEB_DIR = BASE_DIR / "web"
+
+# 加载 .env 环境变量（优先从 BASE_DIR 读取）
+if (BASE_DIR / ".env").exists():
+    load_dotenv(BASE_DIR / ".env")
+else:
+    load_dotenv()
+
 DATA_DIR = BASE_DIR / "data"
 STRATEGIES_DIR = BASE_DIR / "strategies"
 CHECKPOINT_DIR = BASE_DIR / "checkpoints"
-WEB_DIR = BASE_DIR / "web"
 
 for _d in (DATA_DIR, STRATEGIES_DIR, CHECKPOINT_DIR):
     _d.mkdir(parents=True, exist_ok=True)
+
 
 
 class Config:
