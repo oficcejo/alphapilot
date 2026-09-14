@@ -628,6 +628,12 @@ Reef 架构设计了 **5 重硬性交付门禁 (5 Commit Gates)** 与 **自动�
 
 ---
 
+## 🙏 致谢 / Acknowledgements
+
+特别感谢 [Human-Agent-Society/reef](https://github.com/Human-Agent-Society/reef) 团队在持续自进化 Agent 基础设施（Continual learning infra for self-improving agents）领域的卓越开源工作，为本项目的持续演化与策略自迭代机制提供了极具价值的灵感与架构参考！
+
+---
+
 ## 📄 License
 
 本项目仅供学习和研究用途。使用者需遵守所在地区的法律法规，自行承担使用风险。
