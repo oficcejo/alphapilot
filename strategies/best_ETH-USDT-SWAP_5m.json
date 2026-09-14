@@ -2,16 +2,17 @@
   "vocab_version": "v9217a2c0d91a",
   "symbol": "ETH-USDT-SWAP",
   "timeframe": "5m",
+  "data_file": "D:\\www\\okx\\okx-alpha-pilot\\data\\ETH-USDT-SWAP_5m.parquet",
   "formula": [
-    41,
-    96,
-    95,
-    101,
-    98,
-    84,
-    73,
-    70
+    0,
+    0,
+    0,
+    0,
+    0,
+    109,
+    72,
+    72
   ],
-  "best_score": 6.811457633972168,
-  "formula_decoded": "AMIHUD_ILLIQ -> TS_SKEW_10 -> TS_QUANTILE_10 -> TS_ARG_MIN_5 -> TS_MAX_20 -> TS_RANK_10 -> JUMP -> ABS"
+  "best_score": -2.61340069770813,
+  "formula_decoded": "RET -> RET -> RET -> RET -> RET -> CS_RANK -> GATE -> GATE"
 }

@@ -503,25 +503,42 @@ class TradingService:
         if factor is None:
             raise ValueError("因子计算失败（无效策略或求值异常）")
 
-        position_signal = compute_target_positions_stateless(factor)
+        # 3.1 Reef Adaptive Harness: 探测微观体制并动态获取风控/Neutral Band 参数
+        harness_params = None
+        lower_band = 0.25
+        upper_band = 0.75
+        dynamic_sl_pct = getattr(Config, "HARNESS_DEFAULT_SL", 0.030)
+        try:
+            if getattr(Config, "ENABLE_DYNAMIC_HARNESS", True):
+                from evolution.harness import get_harness_policy
+                harness_params = get_harness_policy().evaluate(raw_dict)
+                lower_band = harness_params.lower_band
+                upper_band = harness_params.upper_band
+                dynamic_sl_pct = harness_params.stop_loss_pct
+        except Exception as e:
+            logger.warning(f"Reef Adaptive Harness 评估异常，回退默认风控: {e}")
+
+        position_signal = compute_target_positions_stateless(
+            factor, lower_band=lower_band, upper_band=upper_band
+        )
         signal = float(position_signal[0, -1].item())
         last_price = float(close_arr[-1])
 
         # 3.5 因子诊断信息
-        from strategy_manager.signal import LOWER_BAND, UPPER_BAND
         factor_val = float(factor[0, -1].item()) if hasattr(factor, 'dim') and callable(factor.dim) and factor.dim() >= 2 else float(factor[-1].item())
         tanh_val = float(torch.tanh(torch.tensor(factor_val)).item())
         signal_diag = {
             "factor": round(factor_val, 6),
             "tanh": round(tanh_val, 6),
             "abs_tanh": round(abs(tanh_val), 6),
-            "lower_band": LOWER_BAND,
-            "upper_band": UPPER_BAND,
-            "in_neutral_band": abs(tanh_val) < LOWER_BAND,
+            "lower_band": lower_band,
+            "upper_band": upper_band,
+            "in_neutral_band": abs(tanh_val) < lower_band,
             "raw_signal_before_band": round(tanh_val, 6),
             "signal_after_band": round(signal, 6),
             "bars_used": len(close_arr),
             "feat_shape": list(feat.shape) if hasattr(feat, 'shape') else None,
+            "harness": harness_params.to_dict() if harness_params else None,
         }
 
         # 3.6 参数一致性与因子方差健康度检查
@@ -725,12 +742,12 @@ class TradingService:
             if pos_mode == "net_mode":
                 order_pos_side = "net"
 
-            # 4.3 交易所硬止损价（固定 3% 止损保护）
-            STOP_LOSS_PCT = 0.03
+            # 4.3 交易所硬止损价（基于 Reef Adaptive Harness 动态止损或默认 3% 止损保护）
+            stop_loss_pct = dynamic_sl_pct if harness_params else 0.03
             if order_side == "buy":
-                sl_price = last_price * (1.0 - STOP_LOSS_PCT)
+                sl_price = last_price * (1.0 - stop_loss_pct)
             else:
-                sl_price = last_price * (1.0 + STOP_LOSS_PCT)
+                sl_price = last_price * (1.0 + stop_loss_pct)
             tick_sz = float(inst_info.get("tickSz", 0.01)) if inst_info else 0.01
             tick_dec = len(str(tick_sz).split(".")[1]) if "." in str(tick_sz) else 2
             sl_price_str = f"{sl_price:.{tick_dec}f}"
@@ -753,6 +770,32 @@ class TradingService:
             else:
                 inst_clean = ''.join(c for c in inst_id if c.isalnum())[:8]
                 cl_ord_id = f"ap{int(time.time())}{inst_clean}"
+
+                # 4.5 生成 Reef Observe 决策收据
+                receipt_id = None
+                try:
+                    from evolution.observer import get_observer
+                    receipt_id = get_observer().record_receipt(
+                        inst_id=inst_id,
+                        side=order_side,
+                        pos_side=order_pos_side,
+                        signal=signal,
+                        action=signal_to_action(signal),
+                        last_price=last_price,
+                        target_sz=target_held_sz,
+                        delta_sz=delta_sz,
+                        strategy_formula=formula_decoded,
+                        bar=bar,
+                        cl_ord_id=cl_ord_id,
+                        extra={
+                            "size_detail": size_detail,
+                            "best_score": best_score,
+                            "harness": harness_params.to_dict() if harness_params else None,
+                        },
+                    )
+                except Exception:
+                    pass
+
                 order_result = trade_client.place_order(
                     inst_id=inst_id,
                     side=order_side,
@@ -780,10 +823,12 @@ class TradingService:
                         "time": int(time.time()),
                         "simulated": not Config.is_live(),
                         "size_detail": size_detail,
+                        "receipt_id": receipt_id,
                     }
                     self._last_order_time[inst_id] = time.time()
 
         # 7. 审计日志
+        receipt_id_val = locals().get("receipt_id")
         audit_event = {
             "event": "signal_execution",
             "inst_id": inst_id,
@@ -804,6 +849,8 @@ class TradingService:
             "hedge_actions": hedge_actions,
             "leverage_result": leverage_result,
             "order": order_result,
+            "receipt_id": receipt_id_val,
+            "harness": harness_params.to_dict() if harness_params else None,
             "param_warnings": param_warnings if param_warnings else None,
         }
         self.audit.log(audit_event)
@@ -820,11 +867,13 @@ class TradingService:
             "side": executed_side,
             "size_detail": size_detail,
             "signal_diag": signal_diag,
+            "harness": harness_params.to_dict() if harness_params else None,
             "risk_checks": risk_checks,
             "risk_passed": risk_passed,
             "hedge_actions": hedge_actions,
             "leverage_result": leverage_result,
             "order": order_result,
+            "receipt_id": receipt_id_val,
             "param_warnings": param_warnings if param_warnings else None,
             "mode": Config.TRADING_MODE,
             "is_live": Config.is_live(),
@@ -862,6 +911,13 @@ class TradingService:
             "pos_side": pos_side_to_close,
             "result": result,
         })
+
+        # 触发 Reef Observe 异步对齐
+        try:
+            from evolution.observer import get_observer
+            get_observer().sync(client=trade_client, audit_log_path=str(self.audit.log_path))
+        except Exception:
+            pass
 
         return {
             "inst_id": inst_id,

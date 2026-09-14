@@ -1,0 +1,17 @@
+{
+  "vocab_version": "v9217a2c0d91a",
+  "symbol": "ETH-USDT-SWAP",
+  "timeframe": "1H",
+  "formula": [
+    55,
+    120,
+    59,
+    124,
+    97,
+    104,
+    96,
+    97
+  ],
+  "best_score": 5.819,
+  "formula_decoded": "SUPERTREND_DIR -> TS_ZSCORE_10 -> HURST_50 -> SIGMOID -> TS_MIN_20 -> COVARIANCE_10 -> TS_SKEW_10 -> TS_MIN_20"
+}

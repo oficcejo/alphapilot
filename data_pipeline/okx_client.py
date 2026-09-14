@@ -402,6 +402,98 @@ class OKXClient:
                 continue
         return result
 
+    def get_positions_history(
+        self,
+        inst_type: str = "SWAP",
+        inst_id: Optional[str] = None,
+        mgn_mode: Optional[str] = None,
+        close_type: Optional[str] = None,
+        pos_id: Optional[str] = None,
+        after: Optional[str] = None,
+        before: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """获取最近 3 个月历史持仓信息（已平仓记录）。
+
+        Endpoint: GET /api/v5/account/positions-history
+        """
+        params = [f"instType={inst_type}"]
+        if inst_id:
+            params.append(f"instId={inst_id}")
+        if mgn_mode:
+            params.append(f"mgnMode={mgn_mode}")
+        if close_type:
+            params.append(f"type={close_type}")
+        if pos_id:
+            params.append(f"posId={pos_id}")
+        if after:
+            params.append(f"after={after}")
+        if before:
+            params.append(f"before={before}")
+        if limit:
+            params.append(f"limit={min(limit, 100)}")
+
+        query = "&".join(params)
+        path = f"/api/v5/account/positions-history?{query}"
+        headers = self._auth_headers("GET", path, "")
+        url = self.base_url + path
+        resp = self._session.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != "0":
+            raise RuntimeError(f"OKX API error: {data.get('msg', data)}")
+        return data.get("data", [])
+
+    def get_bills(
+        self,
+        inst_type: Optional[str] = "SWAP",
+        ccy: Optional[str] = None,
+        mgn_mode: Optional[str] = None,
+        bill_type: Optional[str] = None,
+        sub_type: Optional[str] = None,
+        after: Optional[str] = None,
+        before: Optional[str] = None,
+        begin: Optional[str] = None,
+        end: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """获取账单流水（最近 7 天，含平仓盈亏、手续费、资金费率等）。
+
+        Endpoint: GET /api/v5/account/bills
+        """
+        params = []
+        if inst_type:
+            params.append(f"instType={inst_type}")
+        if ccy:
+            params.append(f"ccy={ccy}")
+        if mgn_mode:
+            params.append(f"mgnMode={mgn_mode}")
+        if bill_type:
+            params.append(f"type={bill_type}")
+        if sub_type:
+            params.append(f"subType={sub_type}")
+        if after:
+            params.append(f"after={after}")
+        if before:
+            params.append(f"before={before}")
+        if begin:
+            params.append(f"begin={begin}")
+        if end:
+            params.append(f"end={end}")
+        if limit:
+            params.append(f"limit={min(limit, 100)}")
+
+        query = "&".join(params)
+        path = f"/api/v5/account/bills" + (f"?{query}" if query else "")
+        headers = self._auth_headers("GET", path, "")
+        url = self.base_url + path
+        resp = self._session.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != "0":
+            raise RuntimeError(f"OKX API error: {data.get('msg', data)}")
+        return data.get("data", [])
+
     def place_order(
         self,
         inst_id: str,

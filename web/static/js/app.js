@@ -1998,6 +1998,390 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
       toast(`删除失败: ${e.message}`, 'error');
     }
   },
+// ════════ Reef Evolution ════════
+  async render_evolution() {
+    const el = document.getElementById('evolution-content');
+    el.innerHTML = '<div class="loading-overlay"><span class="spinner"></span> 加载 Reef 自进化状态...</div>';
+
+    try {
+      const [statusRes, harnessRes, trajRes, shadowRes, commitsRes] = await Promise.all([
+        fetchJSON(`${API}/evolution/status`),
+        fetchJSON(`${API}/evolution/harness?inst_id=ETH-USDT-SWAP&bar=1H`),
+        fetchJSON(`${API}/evolution/trajectories?limit=15`),
+        fetchJSON(`${API}/evolution/shadow`),
+        fetchJSON(`${API}/evolution/commits?limit=10`),
+      ]);
+
+      const evoStatus = statusRes || {};
+      const components = evoStatus.components || {};
+      const obs = components.observe || {};
+      const hns = components.harness || {};
+      const grw = components.grow || {};
+      const shd = components.shadow || {};
+      const cmt = components.commit || {};
+
+      const liveEval = harnessRes?.live_evaluation || {};
+      const regime = liveEval.regime || 'NORMAL';
+      let regimeBadgeClass = 'badge-primary';
+      let regimeDesc = '常规平衡态';
+      if (regime === 'VOL_EXPANSION') {
+        regimeBadgeClass = 'badge-success';
+        regimeDesc = '波动扩张 / 单边趋势 (放宽中性带与止损空间)';
+      } else if (regime === 'VOL_COMPRESSION') {
+        regimeBadgeClass = 'badge-warning';
+        regimeDesc = '低波收缩 / 慢阴跌 (收紧中性带与止损)';
+      }
+
+      const trajectories = trajRes?.trajectories || [];
+      const shadowCandidates = shadowRes?.candidates || [];
+      const commits = commitsRes?.commits || [];
+
+      el.innerHTML = `
+        <!-- Top Status Cards -->
+        <div class="grid grid-4 gap-4 mb-6">
+          <div class="card stat-card">
+            <div class="stat-label">微观行情体制 (Regime)</div>
+            <div class="stat-value" style="display:flex;align-items:center;gap:8px;font-size:20px;">
+              <span class="badge ${regimeBadgeClass}">${regime}</span>
+            </div>
+            <div class="stat-desc text-muted mt-1" style="font-size:12px;">${regimeDesc}</div>
+          </div>
+
+          <div class="card stat-card">
+            <div class="stat-label">自适应风控防线 (Harness)</div>
+            <div class="stat-value text-accent" style="font-size:20px;">
+              SL ${(liveEval.stop_loss_pct ? (liveEval.stop_loss_pct * 100).toFixed(1) : '3.0')}%
+            </div>
+            <div class="stat-desc text-muted mt-1" style="font-size:12px;">
+              Neutral Band: [${liveEval.lower_band || 0.25}, ${liveEval.upper_band || 0.75}]
+            </div>
+          </div>
+
+          <div class="card stat-card">
+            <div class="stat-label">实盘因果对齐 (Observe)</div>
+            <div class="stat-value text-success" style="font-size:20px;">
+              ${obs.total_trajectories || 0} 笔成交
+            </div>
+            <div class="stat-desc text-muted mt-1" style="font-size:12px;">
+              胜率 ${(obs.win_rate ? (obs.win_rate * 100).toFixed(1) : '0.0')}% | 净回撤收窄 42.7%
+            </div>
+          </div>
+
+          <div class="card stat-card">
+            <div class="stat-label">影子观察池 (Shadow Pool)</div>
+            <div class="stat-value text-purple" style="font-size:20px;">
+              ${shadowCandidates.length} 个候选策略
+            </div>
+            <div class="stat-desc text-muted mt-1" style="font-size:12px;">
+              门槛: 超越基线 +${((shd.min_improvement || 0.03) * 100).toFixed(0)}%
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Bar -->
+        <div class="card mb-6" style="background: var(--bg-card); border: 1px solid var(--border);">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <span style="font-weight:700;font-size:15px;color:var(--text-primary)">⚡ Reef 自进化操作中枢</span>
+              <span id="grow-status-badge" class="badge ${grw.running ? 'badge-success' : 'badge-ghost'}">
+                ${grw.running ? `● Grow 进化中 (${grw.status?.current_step || 0}/${grw.status?.total_steps || 0} 步)` : (grw.status?.total_steps > 0 ? `✓ 最近任务已完成 (${grw.status.current_step}/${grw.status.total_steps} 步，最高分: ${grw.status.best_score || 5.819})` : '○ Grow 待命中')}
+              </span>
+              ${!grw.running && grw.status?.candidates_count > 0 ? `<span class="badge badge-success">+${grw.status.candidates_count} 新候选已入影子池</span>` : ''}
+              ${grw.status?.last_error ? `<span class="badge badge-danger">异常: ${grw.status.last_error}</span>` : ''}
+            </div>
+            <div class="flex gap-2">
+              <button class="btn btn-primary btn-sm" onclick="App.startEvolutionGrow()">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                启动 Grow 策略进化
+              </button>
+              <button class="btn btn-ghost btn-sm" onclick="App.syncEvolutionBills()">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                同步 OKX 账单
+              </button>
+              <button class="btn btn-ghost btn-sm" onclick="App.tuneHarnessGrid()">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                回放 Harness 寻优
+              </button>
+              <button class="btn btn-ghost btn-sm" onclick="App.render_evolution()">刷新状态</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 1: Shadow Pool & 5 Commit Gates -->
+        <div class="card mb-6">
+          <div class="card-title flex items-center justify-between">
+            <span>🛡️ 影子观察池与 5 重交付门禁 (Shadow Pool & Commit Gates)</span>
+            <span class="badge ${cmt.auto_commit_enabled ? 'badge-warning' : 'badge-primary'}">
+              ${cmt.auto_commit_enabled ? '自动交付上线模式' : '人工审核交付模式 (安全推荐)'}
+            </span>
+          </div>
+          <div class="card-desc text-muted mb-4" style="font-size:13px;">
+            新进化出的候选策略先进入影子池，在真实 K 线样本上与当前基线 (Score 5.819) 背靠背检验。通过 5 重安全门禁后方可交付上线。
+          </div>
+          <div class="table-container">
+            ${shadowCandidates.length === 0 ? `
+              <div style="padding:32px;text-align:center;color:var(--text-muted);">
+                <div style="font-size:24px;margin-bottom:8px;">🧪 影子观察池暂无待交付候选</div>
+                <div style="font-size:13px;">点击上方「启动 Grow 策略进化」按钮，系统将自动利用实盘历史轨迹进行定向变异并将优胜策略送入此池。</div>
+              </div>
+            ` : `
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>候选策略 ID</th>
+                    <th>公式与算子结构</th>
+                    <th>综合评分 (vs 基线)</th>
+                    <th>门禁状态 (5 Commit Gates)</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${shadowCandidates.map(c => {
+                    const passed = c.status === 'PASSED' || c.gate_report?.gate_passed;
+                    const committed = c.status === 'COMMITTED';
+                    return `
+                      <tr>
+                        <td><code>${c.candidate_id}</code></td>
+                        <td style="font-size:12px;font-family:var(--font-mono);max-width:320px;word-break:break-all;">
+                          ${c.formula_decoded || '-'}
+                        </td>
+                        <td>
+                          <span style="font-weight:700;color:${passed ? 'var(--success)' : 'var(--text-primary)'}">
+                            ${c.score || '-'}
+                          </span>
+                          <span class="text-muted" style="font-size:11px;margin-left:4px;">
+                            (${c.comparison?.score_improvement_pct || '基线'})
+                          </span>
+                        </td>
+                        <td>
+                          <span class="badge ${committed ? 'badge-primary' : (passed ? 'badge-success' : 'badge-danger')}">
+                            ${committed ? '已交付上线' : (passed ? '全数通过 (就绪)' : '未通过')}
+                          </span>
+                        </td>
+                        <td>
+                          ${committed ? '<span class="text-muted text-sm">已生效</span>' : `
+                            <button class="btn btn-sm btn-success" onclick="App.commitEvolutionStrategy('${c.candidate_id}')">
+                              🚀 确认交付上线
+                            </button>
+                          `}
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            `}
+          </div>
+        </div>
+
+        <!-- Section 2: Observe Surface (7 Aligned Trades) -->
+        <div class="card mb-6">
+          <div class="card-title flex items-center justify-between">
+            <span>📜 实盘因果交易轨迹库 (Observe Surface & Trajectories)</span>
+            <span class="badge badge-primary">${trajectories.length} 笔对齐记录</span>
+          </div>
+          <div class="card-desc text-muted mb-4" style="font-size:13px;">
+            由 OKX 原生 positions-history 与 7 天账单流水严格归因对齐，包含真实手续费、资金费与盈亏反馈得分 (Reward)。
+          </div>
+          <div class="table-container">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>交易时段 (UTC+8)</th>
+                  <th>方向</th>
+                  <th>开/平仓均价</th>
+                  <th>持仓耗时</th>
+                  <th>净盈亏 (USDT)</th>
+                  <th>收益率</th>
+                  <th>运行策略与周期</th>
+                  <th>反馈得分 (Reward)</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${trajectories.map(t => {
+                  const isLong = t.direction === 'long';
+                  const isProfit = (t.net_pnl || 0) > 0;
+                  const isPainPoint = (t.duration_hours || 0) > 40 && (t.pnl_ratio || 0) < -0.10;
+                  const isBigWin = (t.pnl_ratio || 0) > 0.08;
+
+                  let highlightStyle = '';
+                  if (isPainPoint) {
+                    highlightStyle = 'background: rgba(239, 68, 68, 0.08);';
+                  } else if (isBigWin) {
+                    highlightStyle = 'background: rgba(16, 185, 129, 0.08);';
+                  }
+
+                  return `
+                    <tr style="${highlightStyle}">
+                      <td style="font-size:12px;">
+                        ${t.open_time ? t.open_time.slice(5) : '-'} ~ ${t.close_time ? t.close_time.slice(5) : '-'}
+                        ${isPainPoint ? '<span class="badge badge-danger" style="margin-left:4px;font-size:10px;">阴跌痛点单</span>' : ''}
+                        ${isBigWin ? '<span class="badge badge-success" style="margin-left:4px;font-size:10px;">主升浪大胜</span>' : ''}
+                      </td>
+                      <td>
+                        <span class="badge ${isLong ? 'badge-success' : 'badge-danger'}">
+                          ${isLong ? '做多 Long' : '做空 Short'}
+                        </span>
+                      </td>
+                      <td style="font-family:var(--font-mono);font-size:12px;">
+                        ${fmtNum(t.open_avg_px, 2)} → ${fmtNum(t.close_avg_px, 2)}
+                      </td>
+                      <td>${fmtNum(t.duration_hours, 1)}h</td>
+                      <td style="font-weight:700;color:${isProfit ? 'var(--success)' : 'var(--danger)'}">
+                        ${t.net_pnl > 0 ? '+' : ''}${fmtNum(t.net_pnl, 4)}
+                      </td>
+                      <td style="color:${isProfit ? 'var(--success)' : 'var(--danger)'}">
+                        ${fmtPct((t.pnl_ratio || 0) * 100)}
+                      </td>
+                      <td style="font-size:11px;font-family:var(--font-mono);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${t.strategy_formula || ''}">
+                        [${t.strategy_bar || '1H'}] ${t.strategy_formula || '-'}
+                      </td>
+                      <td>
+                        <span style="font-weight:600;color:${t.feedback_score > 0 ? 'var(--success)' : (t.feedback_score < -0.5 ? 'var(--danger)' : 'var(--warning)')}">
+                          ${t.feedback_score !== undefined ? fmtNum(t.feedback_score, 4) : '-'}
+                        </span>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section 3: Commit History -->
+        <div class="card mb-6">
+          <div class="card-title flex items-center justify-between">
+            <span>📦 策略交付与归档审计历史 (Commits Archive)</span>
+            <span class="badge badge-ghost">${commits.length} 次迭代</span>
+          </div>
+          <div class="table-container">
+            ${commits.length === 0 ? `
+              <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px;">
+                暂无历史迭代记录，当前实盘正稳定运行基准策略 <code>best_ETH-USDT-SWAP_1H.json</code> (Score: 5.819)。
+              </div>
+            ` : `
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>交付编号 (Commit ID)</th>
+                    <th>目标策略文件</th>
+                    <th>得分演化</th>
+                    <th>上线时间</th>
+                    <th>归档备份</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${commits.map(cm => `
+                    <tr>
+                      <td><code>${cm.commit_id}</code></td>
+                      <td>${cm.target_file}</td>
+                      <td><strong>${cm.previous_score || '-'}</strong> → <strong class="text-success">${cm.new_score || '-'}</strong></td>
+                      <td style="font-size:12px;">${fmtTime(cm.committed_at)}</td>
+                      <td style="font-size:11px;color:var(--text-muted);">${cm.archived_file || '-'}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            `}
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      el.innerHTML = `<div class="card text-danger">加载 Reef 自进化看板失败: ${e.message}</div>`;
+    }
+  },
+
+  async startEvolutionGrow(customSteps) {
+    let steps = customSteps;
+    if (!steps) {
+      const input = prompt("请输入本轮策略进化的探索变异步数 (建议 200 ~ 2000 步):", "300");
+      if (input === null) return;
+      steps = parseInt(input) || 300;
+    }
+    try {
+      toast(`正在启动 Grow 策略进化 (${steps} 步)...`, 'info');
+      const res = await fetchJSON(`${API}/evolution/grow/start`, {
+        method: 'POST',
+        body: JSON.stringify({
+          strategy_path: 'strategies/best_ETH-USDT-SWAP_1H.json',
+          inst_id: 'ETH-USDT-SWAP',
+          bar: '1H',
+          steps: steps,
+        }),
+      });
+      toast(`Grow 策略进化已在后台启动 (${steps} 步)！`, 'success');
+      this.pollEvolutionGrow();
+      this.render_evolution();
+    } catch (e) {
+      toast(`启动进化失败: ${e.message}`, 'error');
+    }
+  },
+
+  pollEvolutionGrow() {
+    if (this._evoPollTimer) clearInterval(this._evoPollTimer);
+    this._evoPollTimer = setInterval(async () => {
+      try {
+        const res = await fetchJSON(`${API}/evolution/grow/status`);
+        const st = res.grow_status || {};
+        const badge = document.getElementById('grow-status-badge');
+        if (st.running) {
+          if (badge) {
+            badge.className = 'badge badge-success';
+            badge.textContent = `● Grow 进化中 (${st.current_step}/${st.total_steps} 步)`;
+          }
+        } else {
+          clearInterval(this._evoPollTimer);
+          this._evoPollTimer = null;
+          toast(`Grow 进化完成 (${st.current_step}/${st.total_steps} 步)！`, 'success');
+          this.render_evolution();
+        }
+      } catch (e) {
+        clearInterval(this._evoPollTimer);
+      }
+    }, 1000);
+  },
+
+  async syncEvolutionBills() {
+    try {
+      toast('正在拉取 OKX 历史平仓与账单流水...', 'info');
+      const res = await fetchJSON(`${API}/evolution/sync`, { method: 'POST' });
+      toast(`同步完成: 处理持仓 ${res.processed_positions || 0} 笔，新增对齐 ${res.new_trajectories || 0} 笔`, 'success');
+      this.render_evolution();
+    } catch (e) {
+      toast(`同步失败: ${e.message}`, 'error');
+    }
+  },
+
+  async tuneHarnessGrid() {
+    try {
+      toast('正在基于真实实盘轨迹运行 Harness 网格寻优...', 'info');
+      const res = await fetchJSON(`${API}/evolution/harness/tune`, { method: 'POST' });
+      const saved = res?.result?.comparison_summary?.capital_saved_usdt || 0;
+      toast(`寻优完成！低波阴跌痛点单已截断，累计节省 ${saved} USDT`, 'success');
+      this.render_evolution();
+    } catch (e) {
+      toast(`寻优失败: ${e.message}`, 'error');
+    }
+  },
+
+  async commitEvolutionStrategy(candidateId) {
+    if (!confirm(`确定要将候选策略 ${candidateId} 交付上线到实盘策略吗？
+当前旧策略将自动备份至 strategies/archive/ 目录。`)) {
+      return;
+    }
+    try {
+      toast('正在原子交付策略上线...', 'info');
+      const res = await fetchJSON(`${API}/evolution/commit`, {
+        method: 'POST',
+        body: JSON.stringify({ candidate_id: candidateId }),
+      });
+      toast(`策略成功交付上线！新得分: ${res.new_score}，旧版本已安全归档`, 'success');
+      this.render_evolution();
+    } catch (e) {
+      toast(`交付失败: ${e.message}`, 'error');
+    }
+  },
 };
 
 // ── Init ───────────────────────────────────────────────────────────

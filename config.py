@@ -98,6 +98,17 @@ class Config:
     # + VM 滚动归一化窗口 500 → 取 800 保证数值路径稳定（不足则拒绝出信号）
     REALTIME_MIN_BARS = int(os.getenv("REALTIME_MIN_BARS", "800"))
 
+    # ── Reef 自进化与自适应 Harness ───────────────────────────────────────────
+    ENABLE_DYNAMIC_HARNESS = os.getenv("ENABLE_DYNAMIC_HARNESS", "1") == "1"  # 开启自适应风控
+    HARNESS_MIN_SL = float(os.getenv("HARNESS_MIN_SL", "0.015"))            # 动态最小止损 1.5%
+    HARNESS_MAX_SL = float(os.getenv("HARNESS_MAX_SL", "0.040"))            # 动态最大止损 4.0%
+    HARNESS_DEFAULT_SL = float(os.getenv("HARNESS_DEFAULT_SL", "0.030"))    # 默认基线止损 3.0%
+
+    # ── Reef Phase 3: Grow, Shadow & Commit ─────────────────────────────────
+    AUTO_COMMIT_STRATEGY = os.getenv("AUTO_COMMIT_STRATEGY", "0") == "1"    # 是否开启自动无感热替换交付
+    SHADOW_MIN_IMPROVEMENT = float(os.getenv("SHADOW_MIN_IMPROVEMENT", "0.03"))  # 影子评估超越基线最小幅度 (3%)
+    EVOLUTION_WORKERS = int(os.getenv("EVOLUTION_WORKERS", "1"))            # 后台进化工作线程数
+
 
 # ── 运行时单例 ─────────────────────────────────────────────────────────────
 cfg = Config()

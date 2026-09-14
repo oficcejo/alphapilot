@@ -24,11 +24,17 @@ LOWER_BAND = 0.25    # 低于此值视为噪声，空仓（原 0.15）
 UPPER_BAND = 0.75    # 高于此值满仓（原 0.60）
 
 
-def compute_target_positions_stateless(factors: torch.Tensor) -> torch.Tensor:
+def compute_target_positions_stateless(
+    factors: torch.Tensor,
+    lower_band: float = LOWER_BAND,
+    upper_band: float = UPPER_BAND,
+) -> torch.Tensor:
     """无状态地将因子值转换为目标仓位序列。
 
     Args:
         factors: [N, T] 因子值张量
+        lower_band: 动态中性区间下限阈值（默认 LOWER_BAND）
+        upper_band: 动态中性区间上限阈值（默认 UPPER_BAND）
 
     Returns:
         [N, T] 目标仓位，值域 [-1, 1]
@@ -41,8 +47,9 @@ def compute_target_positions_stateless(factors: torch.Tensor) -> torch.Tensor:
 
     # Neutral band: 弱信号归零
     abs_raw = raw.abs()
+    band_diff = max(upper_band - lower_band, 1e-4)
     # 低于下限 → 0；高于上限 → 原值；中间 → 线性放大
-    scale = torch.clamp((abs_raw - LOWER_BAND) / (UPPER_BAND - LOWER_BAND), 0.0, 1.0)
+    scale = torch.clamp((abs_raw - lower_band) / band_diff, 0.0, 1.0)
     position = raw * scale
 
     return position

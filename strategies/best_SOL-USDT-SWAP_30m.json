@@ -1,0 +1,18 @@
+{
+  "vocab_version": "v9217a2c0d91a",
+  "symbol": "SOL-USDT-SWAP",
+  "timeframe": "30m",
+  "data_file": "D:\\www\\okx\\okx-alpha-pilot\\data\\SOL-USDT-SWAP_30m.parquet",
+  "formula": [
+    31,
+    31,
+    31,
+    31,
+    31,
+    96,
+    72,
+    72
+  ],
+  "best_score": -0.3976929783821106,
+  "formula_decoded": "TREND_STRENGTH_50 -> TREND_STRENGTH_50 -> TREND_STRENGTH_50 -> TREND_STRENGTH_50 -> TREND_STRENGTH_50 -> TS_SKEW_10 -> GATE -> GATE"
+}

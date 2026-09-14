@@ -41,4 +41,7 @@ build/
 dist/
 *.spec
 *.zip
+*.rar
+*.7z
+*.tar.gz
 

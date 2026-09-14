@@ -1,8 +1,8 @@
-# OKX AlphaPilot | 量化研究与交易中枢
+# OKX AlphaPilot | 量化研究与自进化交易中枢
 
-> 从历史 K 线中自动挖掘可解释的「特征 + 算子」因子公式，转换为连续仓位信号，覆盖数据下载、模型训练、离线回测、实时分析和模拟/实盘交易的全链路量化平台。
+> 从历史 K 线中自动挖掘可解释的「特征 + 算子」因子公式，并结合 **Reef 持续自进化闭环**（实盘因果归因、微观体制感知、自适应风控、痛点驱动遗传繁衍与零停机原子交付），覆盖数据下载、离线挖掘、回测验证、实盘交易与在线持续进化的全链路量化平台。
 
-**OKX AlphaPilot** 是一个面向 OKX 交易所的独立量化研究平台。它基于强化学习（REINFORCE）+ Looped Transformer 架构，自动搜索由 65 个因果特征和 66 个算子组成的最优因子公式，将因子值转换为 `[-1, 1]` 的连续仓位信号，多目标评分、Walk-Forward 验证等环节筛选出稳健的 Alpha 策略。
+**OKX AlphaPilot** 是一个面向 OKX 交易所的独立量化研究与自进化交易平台。它基于强化学习（REINFORCE）+ Looped Transformer 架构，自动搜索由 65 个因果特征和 66 个算子组成的最优因子公式，结合微观波动率体制感知（Harness）与持续在线进化中枢（Reef），在动态多变的市场中自适应抵御震荡回撤并持续迭代 Alpha 策略。
 
 ---
 
@@ -19,6 +19,29 @@
 ---
 
 ## ✨ 核心特性
+
+### 🧬 Reef 持续自进化闭环 (Continual Self-Improvement)
+- **Phase 1: 真实对齐与因果归因 (Observe & Credit Alignment)**：
+  - **决策凭证追踪**：每次信号生成与发单分配全局唯一 `receipt_id`，快照记录价格、信号强度与风控状态。
+  - **OKX 账单与持仓对齐**：自动同步 OKX 历史平仓记录 (`positions-history`) 与账单流水 (`bills`)，精准还原真实成交收益、滑点摩擦、手续费与资金费率。
+  - **因果轨迹沉淀**：建立本地高置信度实盘因果轨迹库 (`data/evolution/trajectories.jsonl`)，为在线优化提供带标签的实盘数据集。
+- **Phase 2: 微观体制感知与动态调谐 (Adaptive Harness)**：
+  - **波动率体制感知 (`MarketRegimeDetector`)**：通过短期 ATR 与基线 ATR 比率及动量斜率，实时识别 `VOL_EXPANSION`（波动扩张）、`VOL_COMPRESSION`（波动压缩/窄幅阴跌）与 `NORMAL`（常态）。
+  - **动态死区缓冲 (Dynamic Neutral Band)**：阴跌缩量期动态收窄死区敏捷出场；单边行情放宽死区避免震荡出局。
+  - **自适应止损点 (Dynamic SL)**：低波阴跌期自适应收紧止损至 1.5%~2.0%，防范钝刀割肉；单边扩张期适度放宽至 3.5%~4.0%，容忍正常技术回踩（实盘回测验证减少 42.7% 回撤）。
+  - **离线回放调优 (`HarnessOptimizer`)**：基于真实实盘轨迹自动网格调谐最优参数，热更新生效至 `active_harness.json`。
+- **Phase 3: 痛点进化、影子门禁与原子交付 (Grow, Shadow Pool & Commit)**：
+  - **痛点引导遗传繁衍 (`GrowEngine`)**：分析历史实盘失败与盈利轨迹，对假突破反转、慢阴跌等痛点施加定向适应度偏置（痛点惩罚与顺势奖励），后台异步变异繁衍策略公式。
+  - **5 重严苛交付门禁 (`ShadowEvaluator`)**：进入影子池候选策略必须全部通过：
+    1. *因果无未来函数门禁 (No Lookahead)*：逐 bar 递增计算保证严格无时序未来泄露。
+    2. *非退化方差门禁 (Non-Degenerate)*：因子截面标准差 $\ge 1\times 10^{-4}$，杜绝全 0/常量退化因子。
+    3. *样本外得分超越门禁 (Score Improvement)*：综合多目标评分超越当前实盘基准策略至少 $+3\%$。
+    4. *最大回撤防御门禁 (Drawdown Guard)*：最大回撤不超过基准策略的 1.05 倍，确保风险受控。
+    5. *逆波兰栈机实盘兼容门禁 (StackVM Compatibility)*：全生命周期执行零 NaN、零 Inf、零崩溃。
+  - **零停机原子交付与归档 (`CommitManager`)**：
+    - 自动将当前实盘策略备份归档至 `strategies/archive/`，支持秒级无损回滚。
+    - 原子替换策略文件，实盘交易循环下一 Tick 自动热加载生效，交易零停机中断。
+    - 全生命周期交付日志持久化至 `data/evolution/commits.jsonl`。
 
 ### 因子挖掘引擎
 - **强化学习搜索**：REINFORCE 策略梯度 + Actor-Critic baseline，搜索 8-token 公式序列
@@ -40,14 +63,14 @@
 - **前端状态灯指示**：实时呈现 WebSocket 推送状态 (🟢 WS 实时推送 / 🟡 REST 备用)
 
 ### 交易与风控
-- **连续仓位信号**：Neutral Band + tanh 软压缩，输出 `[-1, 1]` 仓位
-- **风控闸门**：杠杆上限、仓位上限、单日亏损、信号阈值、交易冷却检查
-- **审计日志**：每笔交易决策全程记录（信号、风控、订单、模式）
+- **连续仓位信号**：动态 Neutral Band + tanh 软压缩，输出 `[-1, 1]` 仓位
+- **风控闸门**：动态止损保护、杠杆上限、仓位上限、单日亏损、信号阈值、交易冷却检查
+- **审计日志**：每笔交易决策全程记录（信号、风控、凭证 `receipt_id`、订单、模式）
 
 ### Web 平台
-- **6 个页面**：总览、模型训练、策略回测、实时分析、实盘交易、数据管理
+- **7 个页面**：总览、模型训练、策略回测、实时分析、实盘交易、Reef 自进化、数据管理
 - **策略导入与组合**：支持一键导入外部/导出策略 JSON，可视化弹窗一键生成组合策略
-- **实时图表**：Chart.js 资金曲线、训练曲线、价格信号图、仓位柱状图
+- **实时图表**：Chart.js 资金曲线、训练曲线、价格信号图、仓位柱状图、自进化态势感知
 - **深色量化主题**：现代深色 UI，专为长时间盯盘设计
 
 ---
@@ -55,33 +78,35 @@
 ## 🏗️ 系统架构
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Web 前端 SPA                          │
-│  总览 │ 模型训练 │ 策略回测 │ 实时分析 │ 实盘交易 │ 数据管理  │
-└──────────────────────┬──────────────────────────────────┘
-                       │ HTTP/REST
-┌──────────────────────▼──────────────────────────────────┐
-│              FastAPI 后端 (api/main.py)                   │
-│  ┌─────────┬──────────┬──────────┬──────────┬────────┐  │
-│  │  data   │ training │ backtest │ analysis │trading │  │
-│  └────┬────┴────┬─────┴────┬─────┴────┬─────┴───┬────┘  │
-│       │         │          │          │         │       │
-│  ┌────▼────┐ ┌──▼───┐ ┌───▼────┐ ┌───▼────┐ ┌──▼────┐  │
-│  │ Parquet │ │Engine│ │BT执行器│ │信号计算│ │交易执行│  │
-│  │ 管理    │ │编排  │ │        │ │        │ │+审计  │  │
-│  └────┬────┘ └──┬───┘ └───┬────┘ └───┬────┘ └──┬────┘  │
-└───────┼─────────┼─────────┼──────────┼─────────┼───────┘
-        │         │         │          │         │
-┌───────▼─────────▼─────────▼──────────▼─────────▼───────┐
-│                    核心层 (model/)                        │
-│  AlphaGPT │ StackVM │ MT5Backtest │ Features │ Ops       │
-│  REINFORCE + 熵保护 + Elite Replay + Walk-Forward        │
-└─────────────────────────────────────────────────────────┘
-        │
-┌───────▼─────────────────────────────────────────────────┐
-│              OKX v5 REST API (data_pipeline/)            │
-│  K线下载 │ 行情 │ 品种发现 │ 下单 │ 持仓 │ 杠杆          │
-└─────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                              Web 前端 SPA                               │
+│  总览 │ 模型训练 │ 策略回测 │ 实时分析 │ 实盘交易 │ Reef 自进化 │ 数据管理   │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ HTTP/REST
+┌───────────────────────────────────▼────────────────────────────────────┐
+│                       FastAPI 后端 (api/main.py)                        │
+│  ┌─────────┬──────────┬──────────┬──────────┬──────────┬────────────┐  │
+│  │  data   │ training │ backtest │ analysis │ trading  │ evolution  │  │
+│  └────┬────┴────┬─────┴────┬─────┴────┬─────┴───┬──────┴─────┬──────┘  │
+│       │         │          │          │         │            │         │
+│  ┌────▼────┐ ┌──▼───┐ ┌───▼────┐ ┌───▼────┐ ┌──▼────┐   ┌────▼───────┐ │
+│  │ Parquet │ │Engine│ │BT执行器│ │信号计算│ │交易执行│   │ Reef进化管线│ │
+│  │ 管理    │ │编排  │ │        │ │        │ │+审计  │   │            │ │
+│  └────┬────┘ └──┬───┘ └───┬────┘ └───┬────┘ └──┬────┘   └────┬───────┘ │
+└───────┼─────────┼─────────┼──────────┼─────────┼──────────────┼────────┘
+        │         │         │          │         │              │
+┌───────▼─────────▼─────────▼──────────▼─────────▼──────────────▼────────┐
+│                        持续自进化与核心层                                │
+│  AlphaGPT │ StackVM │ MT5Backtest │ Features │ Ops                     │
+│  ────────────── Reef Continual Self-Improving Loop ──────────────────  │
+│  [Observe 账单对齐] → [Adaptive Harness 动态风控] → [Grow 痛点遗传变异]   │
+│                 → [Shadow 5重门禁] → [Commit 原子热交付]               │
+└──────────────────────────────────────┬─────────────────────────────────┘
+                                       │
+┌──────────────────────────────────────▼─────────────────────────────────┐
+│                    OKX v5 REST / WebSocket (data_pipeline/)            │
+│  行情与K线 │ 账户资产 │ 仓位流水 (positions-history) │ 账单 (bills) │ 交易下单   │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -90,10 +115,18 @@
 
 ```
 okx-alpha-pilot/
-├── config.py                       # 全局配置（路径、OKX API、风控）
+├── config.py                       # 全局配置（路径、OKX API、风控、Reef进化参数）
 ├── run.py                          # 启动入口
 ├── .env.example                    # 环境变量模板
 ├── requirements.txt                # Python 依赖
+│
+├── evolution/                      # 🧬 Reef 持续自进化中枢
+│   ├── __init__.py                 #   统一导出接口
+│   ├── observer.py                 #   Phase 1: 真实对齐与账单归因 (ObserveEngine)
+│   ├── harness.py                  #   Phase 2: 微观态势感知与自适应风控 (AdaptiveHarnessPolicy)
+│   ├── grow.py                     #   Phase 3: 痛点变异进化引擎 (GrowEngine)
+│   ├── shadow.py                   #   Phase 3: 5 重影子门禁评估器 (ShadowEvaluator)
+│   └── commit.py                   #   Phase 3: 原子热替换与归档管理器 (CommitManager)
 │
 ├── model/                          # 机器学习核心
 │   ├── alphagpt.py                 #   AlphaGPT 模型（QK-Norm + 权重共享）
@@ -109,10 +142,10 @@ okx-alpha-pilot/
 │   └── config.py                   #   模型层配置（设备/训练参数/Reward）
 │
 ├── strategy_manager/
-│   └── signal.py                   # 因子 → 连续仓位转换（Neutral Band + tanh）
+│   └── signal.py                   # 因子 → 连续仓位转换（动态 Neutral Band + tanh）
 │
 ├── data_pipeline/                  # 数据管道
-│   ├── okx_client.py               #   OKX v5 REST 客户端（公有+私有接口）
+│   ├── okx_client.py               #   OKX v5 REST 客户端（公有+私有接口/账单与历史持仓）
 │   ├── okx_ws_client.py            #   OKX v5 WebSocket 实时订阅客户端
 │   ├── parquet_manager.py          #   Parquet 读写管理
 │   ├── timeframe_utils.py          #   K线周期工具
@@ -126,23 +159,26 @@ okx-alpha-pilot/
 │   │   ├── backtest.py             #     策略回测（资金曲线/绩效指标）
 │   │   ├── analysis.py             #     实时分析（OKX/MT5/TradingView 信号）
 │   │   ├── trading.py              #     实盘交易（paper/live + 审计日志）
-│   │   └── portfolio.py            #     组合策略（多因子融合与构建）
+│   │   ├── portfolio.py            #     组合策略（多因子融合与构建）
+│   │   └── evolution.py            #     Reef 自进化（状态/轨迹/调谐/Grow/影子/Commit）
 │   └── services/                   #   服务层
 │       ├── training_service.py     #     训练编排（后台线程 + 实时进度）
 │       ├── backtest_service.py     #     回测执行（PnL/Sortino/Calmar/回撤）
 │       ├── analysis_service.py     #     信号计算（实时K线 → 因子 → 仓位）
-│       ├── trading_service.py      #     交易执行（风控 + 审计日志）
+│       ├── trading_service.py      #     交易执行（风控 + 动态止损 + 审计日志）
 │       └── strategy_service.py     #     策略加载/解码/保存与多因子组合
 │
 ├── web/                            # 前端 SPA
-│   ├── index.html                  #   6 页面单页应用
+│   ├── index.html                  #   7 页面单页应用（包含 Reef 自进化中枢）
 │   └── static/
 │       ├── css/style.css           #   现代深色量化主题
-│       └── js/app.js               #   SPA 路由 + Chart.js 图表
+│       └── js/app.js               #   SPA 路由 + Chart.js 图表 + 自进化操作面板
 │
-├── data/                           # Parquet 数据文件（自动创建）
-├── strategies/                     # 策略 JSON 文件（自动创建）
-└── checkpoints/                    # 训练检查点（自动创建）
+├── data/                           # 数据持久化目录
+│   └── evolution/                  #   Reef 进化数据（trajectories/active_harness/shadow_pool/commits）
+├── strategies/                     # 策略 JSON 文件
+│   └── archive/                    #   热交付历史备份归档
+└── checkpoints/                    # 训练检查点
 ```
 
 ---
@@ -265,14 +301,19 @@ docker stop alphapilot && docker rm alphapilot
 ### 5. 典型工作流
 
 ```
-数据管理          模型训练          策略回测          实时分析          实盘交易
-   │                │                │                │                │
-   ▼                ▼                ▼                ▼                ▼
-下载 K线  ──→  选择 Parquet   ──→  选择策略     ──→  选择数据源   ──→  选择策略
-ETH-USDT       训练 9000 步        选择数据          OKX 实时          设置本金
- ≥15m 周期      查看训练曲线        设置手续费        计算信号          设置杠杆
- ≥4000 根       导出策略            查看资金曲线      查看仓位          执行信号
-                                                                  查看审计日志
+数据管理         模型训练         策略回测         实盘交易           Reef 持续自进化中枢
+   │               │               │               │                       │
+   ▼               ▼               ▼               ▼                       ▼
+下载 K线 ───→ 选择 Parquet ───→ 选择策略 ───→ 执行信号 ───→ [Observe] 同步 OKX 账单与对齐轨迹
+ETH-USDT      训练 9000 步       离线回测        动态止损               │
+ ≥15m 周期     导出初始策略       多指标评估      凭证审计          [Adaptive Harness]
+ ≥4000 根                                                    识别波动率体制 & 动态死区
+                                                                        │
+                                                             [Grow] 痛点引导变异进化
+                                                                        │
+                                                             [Shadow] 5重安全门禁检验
+                                                                        │
+                                                             [Commit] 零停机原子交付实盘
 ```
 
 ---
@@ -331,13 +372,33 @@ ETH-USDT       训练 9000 步        选择数据          OKX 实时          
 ### 5. 实盘交易
 - **双模式**：paper（默认模拟盘）/ live（显式开启）
 - **风控闸门**：
+  - 动态自适应止损点（结合 Harness 微观体制自适应收紧/放宽）
   - 杠杆上限检查（默认 max 20x）
   - 仓位占比上限（默认 30%）
   - 信号阈值检查（|signal| ≥ 0.05）
   - 信号范围校验（[-1, 1]）
-- **审计日志**：记录每笔交易的信号、风控结果、订单详情
+- **审计日志**：记录每笔交易的信号、风控结果、订单详情以及全局唯一的决策凭证 `receipt_id`
 
-### 6. 数据管理
+### 6. Reef 自进化操作中枢
+- **自进化全景总览**：一屏掌握已对齐实盘轨迹数、实盘胜率、累计净盈亏，实时监控 Observe、Harness、Grow、Shadow 与 Commit 五大模块运行状态。
+- **微观体制实时监控**：
+  - 实时检测当前市场波动率体制（`VOL_EXPANSION` 扩张 / `VOL_COMPRESSION` 压缩 / `NORMAL` 平衡）。
+  - 动态呈现当前周期的 ATR14 比率、动态 Neutral Band 死区范围（如 `[-0.15, 0.15]`）与自适应止损线（如 `1.5%`）。
+- **一键账单对齐与回放寻优**：
+  - 点击「同步 OKX 真实账单」自动拉取最新成交平仓单，精准溯源计算真实滑点与手续费，生成高置信度轨迹。
+  - 点击「寻优自适应配置」基于沉淀的真实实盘轨迹回放微观风控参数，沉淀至 `active_harness.json`。
+- **Grow 策略进化交互**：
+  - 支持自定义进化代数（步数，如 100 步）。
+  - 点击「启动 Grow 策略进化」由后台守护线程在不影响实盘的前提下进行变异繁衍。
+  - 前端支持毫秒级轮询：显示「● Grow 进化运行中 (Step X/Y, Best Score: Z)」，并在完成后自动刷新影子池。
+- **影子观察池与 5 重门禁透视**：
+  - 呈现进入候选池的新策略代码、Token 公式逆波兰表达式、验证集评分对比与夏普提升幅度。
+  - 详细列示 5 重门禁（No-Lookahead、方差非退化、超越基准 $\ge 3\%$、回撤不劣化、StackVM 兼容性）的通过状态（✅ PASSED）。
+- **一键原子热交付 (Commit)**：
+  - 对已通过全部门禁的胜出候选策略，支持管理员点击「确认交付实盘 (Commit)」。
+  - 系统原子化替换活跃实盘策略，自动备份归档老版本至 `strategies/archive/`，实时交易服务下一 Tick 自动热重载，交易全程零停机。
+
+### 7. 数据管理
 - **下载 K 线**：从 OKX 下载指定品种和周期的历史数据
 - **品种发现**：自动发现 OKX 可用 SWAP 合约（加密、贵金属、指数等）
 - **文件管理**：查看、删除本地 Parquet 文件
@@ -372,6 +433,23 @@ ETH-USDT       训练 9000 步        选择数据          OKX 实时          
 | `GET` | `/api/trading/audit` | 审计日志 |
 | `GET` | `/api/trading/config` | 交易配置 |
 
+### Reef 自进化端点 (`/api/evolution/*`)
+
+| 方法 | 路径 | 功能 |
+|------|------|------|
+| `GET` | `/api/evolution/status` | 获取自进化流水线（五大模块）全景状态 |
+| `GET` | `/api/evolution/trajectories` | 查询实盘因果对齐轨迹列表与明细 |
+| `GET` | `/api/evolution/stats` | 查询实盘交易归因统计指标（胜率、净收益等） |
+| `POST` | `/api/evolution/sync` | 触发 OKX 账单与持仓对齐同步（`lookback_days`） |
+| `GET` | `/api/evolution/harness` | 获取自适应风控配置与实时体制参数 |
+| `POST` | `/api/evolution/harness/tune` | 触发基于实盘轨迹的 Harness 离线寻优 |
+| `POST` | `/api/evolution/grow/start` | 启动后台策略遗传变异进化任务 |
+| `GET` | `/api/evolution/grow/status` | 查询策略进化任务当前进度与最佳候选 |
+| `POST` | `/api/evolution/grow/stop` | 终止正在运行的策略进化任务 |
+| `GET` | `/api/evolution/shadow` | 查询影子候选池与 5 重门禁评估报告 |
+| `POST` | `/api/evolution/commit` | 触发影子策略原子热替换交付（自动归档） |
+| `GET` | `/api/evolution/commits` | 查询策略交付与归档审计历史 |
+
 ---
 
 ## ⚙️ 配置详解
@@ -393,6 +471,18 @@ ETH-USDT       训练 9000 步        选择数据          OKX 实时          
 | `MAX_POSITION_PCT` | `0.30` | — | 单品种最大仓位占比 |
 | `WEB_HOST` | `0.0.0.0` | `WEB_HOST` | Web 监听地址 |
 | `WEB_PORT` | `8009` | `WEB_PORT` | Web 监听端口 |
+
+### 自进化配置 (`config.py`)
+
+| 配置项 | 默认值 | 环境变量 | 说明 |
+|--------|--------|----------|------|
+| `ENABLE_DYNAMIC_HARNESS` | `True` | `ENABLE_DYNAMIC_HARNESS` | 是否开启自适应微观体制感知与动态 Neutral Band / 动态止损 |
+| `HARNESS_MIN_SL` | `0.015` | `HARNESS_MIN_SL` | 动态止损下限 (1.5%，低波阴跌保护) |
+| `HARNESS_MAX_SL` | `0.040` | `HARNESS_MAX_SL` | 动态止损上限 (4.0%，高波扩张容忍度) |
+| `HARNESS_DEFAULT_SL` | `0.030` | `HARNESS_DEFAULT_SL` | 默认基准止损线 (3.0%) |
+| `AUTO_COMMIT_STRATEGY` | `False` | `AUTO_COMMIT_STRATEGY` | 5 重门禁全过时是否自动执行原子替换（默认 False，由人工确认） |
+| `SHADOW_MIN_IMPROVEMENT`| `0.03` | `SHADOW_MIN_IMPROVEMENT` | 候选策略超越基准策略的最小评分提升幅度 (3%) |
+| `EVOLUTION_WORKERS` | `1` | `EVOLUTION_WORKERS` | 后台进化工作线程数 |
 
 ### 模型配置 (`model/config.py`)
 
@@ -522,6 +612,18 @@ python run.py --reload
 <summary><b>Q: 支持哪些 K 线周期？</b></summary>
 
 OKX 支持的所有周期：`1m`、`3m`、`5m`、`15m`、`30m`、`1H`、`2H`、`4H`、`6H`、`12H`、`1D`、`1W`、`1M`。
+</details>
+
+<details>
+<summary><b>Q: Reef 持续自进化系统是如何保证安全不爆仓或负收益迭代的？</b></summary>
+
+Reef 架构设计了 **5 重硬性交付门禁 (5 Commit Gates)** 与 **自动备份回滚机制**：
+1. **严格因果隔离 (No-Lookahead)**：任何变异进化公式必须通过逐 bar 递增因果检验，杜绝时序未来函数泄露；
+2. **方差健康度检验 (Non-Degenerate)**：因子截面标准差 $\sigma \ge 1\times 10^{-4}$，防止因子在震荡市输出常数或退化为 Beta；
+3. **样本外严苛超额 (Score Improvement)**：仅当候选策略在历史高信度实盘轨迹与验证集上的综合得分超越基准策略至少 $+3\%$ 时才允许晋级；
+4. **最大回撤硬约束 (Drawdown Guard)**：新策略的最大回撤不得劣于基准策略的 1.05 倍，杜绝激进放大的下行风险；
+5. **栈机沙箱全量重放 (StackVM Sandbox)**：在虚拟机沙箱中全量重放，确认零除零、零 NaN、零越界；
+6. **归档备份与秒级回滚 (Archive Backup)**：任何热替换前均会将当前运行的策略自动备份至 `strategies/archive/`，支持秒级无损回滚。
 </details>
 
 ---
