@@ -1529,11 +1529,11 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
           if (r.ws_status.connected) {
             badge.style.background = '#10b981';
             badge.style.color = '#fff';
-            badge.textContent = 'WS 实时推送';
+            badge.textContent = '行情WS实时推送';
           } else {
             badge.style.background = '#f59e0b';
             badge.style.color = '#fff';
-            badge.textContent = 'WS 备用(REST)';
+            badge.textContent = '行情WS备用(REST)';
           }
         }
       }
@@ -2393,6 +2393,25 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
     badge.className = `mode-badge ${sys.is_live ? 'live' : 'paper'}`;
   } catch (e) {
     console.warn('系统信息获取失败:', e);
+  }
+  try {
+    const r = await fetchJSON(`${API}/trading/runtime`);
+    if (r && r.ws_status) {
+      const wsBadge = document.getElementById('ws-badge');
+      if (wsBadge) {
+        if (r.ws_status.connected) {
+          wsBadge.style.background = '#10b981';
+          wsBadge.style.color = '#fff';
+          wsBadge.textContent = '行情WS实时推送';
+        } else {
+          wsBadge.style.background = '#f59e0b';
+          wsBadge.style.color = '#fff';
+          wsBadge.textContent = '行情WS备用(REST)';
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('行情推送状态获取失败:', e);
   }
   App.navigate('dashboard');
 })();

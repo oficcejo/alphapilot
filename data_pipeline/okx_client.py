@@ -590,18 +590,28 @@ class OKXClient:
         result["live"] = True
         return result
 
-    def close_position(self, inst_id: str, pos_side: str = "net", mgn_mode: str = "cross") -> dict:
+    def close_position(
+        self,
+        inst_id: str,
+        pos_side: str = "net",
+        mgn_mode: str = "cross",
+        tag: Optional[str] = None,
+    ) -> dict:
         """平仓。"""
+        broker_tag = tag if tag is not None else BROKER_TAG
         if not Config.is_live():
             return {
                 "simulated": True,
                 "inst_id": inst_id,
                 "pos_side": pos_side,
+                "broker_tag": broker_tag,
                 "msg": "PAPER — 模拟平仓",
             }
         body_dict = {"instId": inst_id, "mgnMode": mgn_mode}
         if pos_side != "net":
             body_dict["posSide"] = pos_side
+        if broker_tag:
+            body_dict["tag"] = broker_tag
         body = json.dumps(body_dict)
         path = "/api/v5/trade/close-position"
         headers = self._auth_headers("POST", path, body)
@@ -611,7 +621,9 @@ class OKXClient:
         data = resp.json()
         if data.get("code") != "0":
             raise RuntimeError(f"OKX close error: {data.get('msg', data)}")
-        return data.get("data", [{}])[0]
+        result = data.get("data", [{}])[0]
+        result["broker_tag"] = broker_tag
+        return result
 
     def get_account_config(self) -> dict:
         """获取账户配置信息。

@@ -60,7 +60,7 @@
 ### WebSocket 实时推送
 - **行情与持仓推送**：集成 OKX v5 WebSocket (Public + Private)，实时推送 Ticker、账户余额、持仓及成交回报
 - **自动断线重连**：内置指数退避重连与 Ping/Pong 20 秒心跳维持
-- **前端状态灯指示**：实时呈现 WebSocket 推送状态 (🟢 WS 实时推送 / 🟡 REST 备用)
+- **前端状态灯指示**：实时呈现 WebSocket 推送状态 (🟢 行情WS实时推送 / 🟡 REST 备用)
 
 ### 交易与风控
 - **连续仓位信号**：动态 Neutral Band + tanh 软压缩，输出 `[-1, 1]` 仓位
