@@ -184,7 +184,7 @@ okx-alpha-pilot/
 ---
 ## 准备开始-注册获取 OKX API
 
-1. **注册 OKX**：[点击okx官网注册,佣金享5%优惠](https://www.gtohfmmy.com/join/6746503)
+1. **注册 OKX**：[点击okx官网注册,佣金享5%优惠](https://www.topzhjdgxcb.com/join/6746503)
    - 使用上面邀请码注册并完成任务，最高获 100 USDT 奖励，交易佣金优惠 5%。具体奖励、地区限制和活动规则以 OKX 页面显示为准。
 2. 登录 OKX，点击右上角个人中心，进入“API 管理”，创建 API。
 3. API 权限至少需要“读取”；需要下单时增加“交易”权限。
