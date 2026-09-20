@@ -1188,12 +1188,29 @@ delete_history: true,
               </select></div>
               <div class="form-group"><label class="form-label">最大仓位占比</label><input class="form-input" id="tr-max-pos" type="number" value="0.30" step="0.05" min="0.05" max="1.0"></div>
             </div>
+            <div class="form-group mt-2" style="background:var(--bg-primary);padding:8px 12px;border-radius:6px;border:1px solid var(--border)">
+              <label class="form-label flex items-center justify-between" style="margin-bottom:2px;cursor:pointer">
+                <span class="flex items-center gap-1">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--green)"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                  <strong>阶梯主动止盈 (Ladder TP)</strong>
+                </span>
+                <input type="checkbox" id="tr-ladder-tp" ${config.enable_ladder_tp !== false ? 'checked' : ''} style="transform:scale(1.2);cursor:pointer">
+              </label>
+              <div class="text-xs text-muted">标的浮盈≥+2.5%减仓至65%，≥+4.5%减仓至30%，余30%趋势底仓 (单向棘轮只减不补)</div>
+            </div>
             <div class="flex gap-2 mt-4">
-              <button class="btn btn-success flex-1" onclick="App.executeTrade()">
+              <button class="btn btn-success flex-1" onclick="App.executeTrade()" title="立即手动计算并执行一次当前策略信号（用于调试、试单或盘中强制同步）">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
-                执行信号
+                执行信号 (手动单次)
               </button>
-              <button class="btn btn-danger" onclick="App.closePosition()">平仓</button>
+              <button class="btn btn-danger" onclick="App.closePosition()" title="一键应急清仓：无视策略信号，立即以市价全平当前合约所有持仓并撤销挂单">
+                平仓 (应急全平)
+              </button>
+            </div>
+            <div class="text-xs text-muted mt-3" style="background:var(--bg-primary);padding:8px 12px;border-radius:6px;border:1px solid var(--border);line-height:1.6">
+              💡 <strong>操作按钮说明</strong>：
+              <div class="mt-1">• <span style="color:var(--green);font-weight:600">执行信号 (手动单次)</span>：立即按策略计算一次最新信号并下单/阶梯调仓（注：日常全自动无人值守请使用右侧「自动执行」）。</div>
+              <div>• <span style="color:var(--red);font-weight:600">平仓 (应急全平)</span>：一键紧急避险。无视策略信号，立即市价 100% 清空持仓并撤销全部挂单。</div>
             </div>
           </div>
 
@@ -1451,6 +1468,7 @@ delete_history: true,
           leverage: parseInt(document.getElementById('tr-leverage').value),
           bar: document.getElementById('tr-bar').value,
           max_position_pct: parseFloat(document.getElementById('tr-max-pos').value),
+          ladder_tp: document.getElementById('tr-ladder-tp') ? document.getElementById('tr-ladder-tp').checked : true,
         }),
       });
       this.renderTradeResult(r);
@@ -1470,6 +1488,10 @@ delete_history: true,
     ).join('');
     const order = r.order || {};
     const sd = r.size_detail || {};
+    const ltp = r.ladder_tp || {};
+    const ltpBadge = ltp.triggered
+      ? `<span class="badge badge-success" style="background:#059669;color:#fff;font-size:12px;padding:3px 8px">🎯 阶梯止盈 T${ltp.tier}生效 (限仓 ${(ltp.cap_ratio * 100).toFixed(0)}% / 标的浮盈 +${(ltp.pnl_pct * 100).toFixed(2)}%)</span>`
+      : (ltp.enabled ? `<span class="badge badge-muted" style="font-size:12px;padding:3px 8px" title="当前标的浮盈 ${(ltp.pnl_pct * 100).toFixed(2)}%">阶梯止盈监控中 (${(ltp.pnl_pct * 100).toFixed(2)}%)</span>` : '<span class="badge badge-muted" style="font-size:12px;padding:3px 8px">阶梯止盈已关闭</span>');
     const hedgeHtml = (r.hedge_actions || []).length > 0
       ? `<div class="mt-4"><div class="stat-label mb-2">对冲平仓</div>${r.hedge_actions.map(h => `<div class="text-sm flex items-center gap-2"><span class="badge badge-warning">${h.action}</span><span>${h.pos_side} ${h.pos_sz} 张</span>${h.error ? `<span class="text-danger">${h.error}</span>` : ''}</div>`).join('')}</div>`
       : '';
@@ -1480,6 +1502,7 @@ delete_history: true,
     area.innerHTML = `
       <div style="text-align:center;padding:8px">
         <div class="signal-indicator ${sigClass}" style="font-size:16px;padding:6px 20px">${r.action}</div>
+        <div class="mt-2">${ltpBadge}</div>
       </div>
       <div class="grid-3 mt-4">
         <div><div class="stat-label">最新价格</div><div class="text-mono" style="font-weight:600">${r.last_price}</div></div>
@@ -1653,6 +1676,7 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
           bar: document.getElementById('tr-bar').value,
           max_position_pct: parseFloat(document.getElementById('tr-max-pos').value),
           interval_seconds: interval,
+          ladder_tp: document.getElementById('tr-ladder-tp') ? document.getElementById('tr-ladder-tp').checked : true,
         }),
       });
       if (r.ok) {

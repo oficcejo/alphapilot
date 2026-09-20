@@ -331,14 +331,47 @@ class OKXClient:
                 "avail_bal": _safe_float(d.get("availBal")),
                 "cash_bal": _safe_float(d.get("cashBal")),
                 "upl": _safe_float(d.get("upl")),
+                "imr": _safe_float(d.get("imr")),
+                "margin": _safe_float(d.get("margin")),
+                "ord_froz": _safe_float(d.get("ordFroz") or d.get("ordFrozen")),
             })
-        avail_bal = next((d["avail_bal"] for d in details if d["ccy"] == "USDT"), 0.0)
+        usdt_detail = next((d for d in details if d["ccy"] == "USDT"), {})
+        avail_bal = usdt_detail.get("avail_bal", 0.0)
+        cash_bal = usdt_detail.get("cash_bal", 0.0)
+        total_eq = _safe_float(raw.get("totalEq")) or usdt_detail.get("eq", 0.0)
+
+        # 1. 未实现盈亏：优先取顶层 upl，若为 0 或空，则取各币种明细中的 upl 汇总
+        raw_upl = _safe_float(raw.get("upl"))
+        detail_upl = sum(d.get("upl", 0.0) for d in details)
+        upl = raw_upl if raw_upl != 0.0 else detail_upl
+
+        # 2. 未实现盈亏率
+        raw_upl_ratio = _safe_float(raw.get("uplRatio"))
+        if raw_upl_ratio != 0.0:
+            upl_ratio = raw_upl_ratio
+        elif total_eq > 0 and upl != 0.0:
+            cost_basis = total_eq - upl
+            upl_ratio = (upl / cost_basis) if cost_basis > 0 else (upl / total_eq)
+        else:
+            upl_ratio = 0.0
+
+        # 3. 保证金占用：OKX 顶层字段为 imr (Initial Margin Requirement)
+        # 单币种模式下也取 usdt_detail["imr"]，或 cash_bal - avail_bal 准确计算已占用保证金
+        raw_imr = _safe_float(raw.get("imr"))
+        raw_margin = _safe_float(raw.get("margin"))
+        detail_imr = usdt_detail.get("imr", 0.0)
+        calc_margin = max(0.0, cash_bal - avail_bal) if (cash_bal > 0 and avail_bal > 0) else 0.0
+        margin = raw_imr or detail_imr or raw_margin or calc_margin
+
+        # 4. 保证金占用率：已用保证金 / 总权益
+        margin_ratio = (margin / total_eq) if total_eq > 0 else 0.0
+
         return {
-            "total_eq": _safe_float(raw.get("totalEq")),
-            "upl": _safe_float(raw.get("upl")),
-            "upl_ratio": _safe_float(raw.get("uplRatio")),
-            "margin": _safe_float(raw.get("margin")),
-            "margin_ratio": _safe_float(raw.get("mgnRatio")),
+            "total_eq": total_eq,
+            "upl": upl,
+            "upl_ratio": upl_ratio,
+            "margin": margin,
+            "margin_ratio": margin_ratio,
             "ord_froz": _safe_float(raw.get("ordFroz")),
             "avail_bal": avail_bal,
             "currency": "USDT",
@@ -383,19 +416,28 @@ class OKXClient:
         result = []
         for p in raw_list:
             try:
+                pos_val = _safe_float(p.get("pos"))
+                pos_lever = _safe_float(p.get("lever"))
+                pos_last = _safe_float(p.get("last"))
+                # OKX 全仓持仓的 margin 字段为空字符串，其占用保证金在 imr 或名义价值/杠杆中
+                raw_pos_margin = _safe_float(p.get("margin")) or _safe_float(p.get("imr"))
+                if raw_pos_margin == 0.0 and abs(pos_val) > 0 and pos_lever > 0 and pos_last > 0:
+                    notional = _safe_float(p.get("notionalUsd")) or (abs(pos_val) * 0.1 * pos_last)
+                    raw_pos_margin = notional / pos_lever
+
                 result.append({
                     "inst_id": p.get("instId", ""),
                     "pos_side": p.get("posSide", "net"),
-                    "pos": _safe_float(p.get("pos")),
+                    "pos": pos_val,
                     "pos_ccy": p.get("posCcy", ""),
                     "avg_px": _safe_float(p.get("avgPx")),
-                    "last": _safe_float(p.get("last")),
+                    "last": pos_last,
                     "upl": _safe_float(p.get("upl")),
                     "upl_ratio": _safe_float(p.get("uplRatio")),
                     "realized_pnl": _safe_float(p.get("realizedPnl")),
-                    "margin": _safe_float(p.get("margin")),
+                    "margin": raw_pos_margin,
                     "mgn_mode": p.get("mgnMode", "cross"),
-                    "lever": _safe_float(p.get("lever")),
+                    "lever": pos_lever,
                     "liq_px": _safe_float(p.get("liqPx")),
                 })
             except Exception:

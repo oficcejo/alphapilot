@@ -83,6 +83,8 @@ class TradingService:
         # 交易冷却：记录每个品种最后一次下单时间，防止频繁开平
         self._last_order_time: dict[str, float] = {}
         self._cooldown_seconds: int = int(os.getenv("TRADE_COOLDOWN_SECONDS", "180"))
+        # 阶梯主动止盈单向棘轮跟踪：inst_id -> 最高生效的仓位上限比例 (0.65 或 0.30)
+        self._ladder_tp_ratchet: dict[str, float] = {}
 
     # ── 状态查询 ──────────────────────────────────────────────────────────
 
@@ -136,6 +138,26 @@ class TradingService:
             status["positions"] = positions
         except Exception as e:
             status["positions_error"] = str(e)
+
+        # 交叉对齐兜底：若持仓列表有活跃持仓，而账户汇总因接口差异缺失 upl 或 margin，则从持仓自动补全
+        if status["account"] and status["positions"]:
+            acct = status["account"]
+            pos_list = status["positions"]
+            active_pos = [p for p in pos_list if abs(p.get("pos", 0.0)) > 0]
+            if active_pos:
+                if acct.get("upl", 0.0) == 0.0:
+                    pos_upl = sum(p.get("upl", 0.0) for p in active_pos)
+                    if pos_upl != 0.0:
+                        acct["upl"] = pos_upl
+                        total_eq = acct.get("total_eq", 0.0)
+                        cost_basis = total_eq - pos_upl
+                        acct["upl_ratio"] = (pos_upl / cost_basis) if cost_basis > 0 else (pos_upl / total_eq if total_eq > 0 else 0.0)
+                if acct.get("margin", 0.0) == 0.0:
+                    pos_margin = sum(p.get("margin", 0.0) for p in active_pos)
+                    if pos_margin > 0.0:
+                        acct["margin"] = pos_margin
+                        total_eq = acct.get("total_eq", 0.0)
+                        acct["margin_ratio"] = (pos_margin / total_eq) if total_eq > 0 else 0.0
 
         # 单日风控状态
         passed, msg, info = self._check_daily_loss()
@@ -401,6 +423,7 @@ class TradingService:
         leverage: int = 5,
         bar: str = "1H",
         max_position_pct: float = 0.30,
+        ladder_tp: Optional[bool] = None,
     ) -> dict:
         """执行交易信号——获取最新行情、计算信号、按 Delta 差额调仓。
 
@@ -576,6 +599,81 @@ class TradingService:
 
         trade_client = get_private_client()
         net_current_sz, current_positions = self._get_net_position(trade_client, inst_id)
+
+        # 4.4 阶梯主动止盈 (Ladder Take Profit)
+        use_ladder_tp = Config.ENABLE_LADDER_TP if ladder_tp is None else bool(ladder_tp)
+        ladder_tp_diag = {
+            "enabled": use_ladder_tp,
+            "triggered": False,
+            "tier": 0,
+            "pnl_pct": 0.0,
+            "cap_ratio": 1.0,
+            "original_target_sz": round(target_held_sz, 6),
+            "adjusted_target_sz": round(target_held_sz, 6),
+        }
+
+        # 仓位归零或反向时，重置单向棘轮
+        if abs(net_current_sz) == 0 or (target_held_sz * net_current_sz < 0):
+            with self._lock:
+                self._ladder_tp_ratchet.pop(inst_id, None)
+
+        if use_ladder_tp and net_current_sz != 0 and (target_held_sz * net_current_sz > 0):
+            # 已有持仓且信号同向（顺势持仓中）：检测纯标的价差浮盈
+            active_pos = [p for p in current_positions if float(p.get("pos", 0.0) or p.get("target_sz", 0.0) or 0.0) != 0]
+            entry_px = None
+            if active_pos:
+                p_entry = active_pos[0]
+                entry_px = float(p_entry.get("avg_px") or p_entry.get("entry_price") or p_entry.get("avgPx") or 0.0)
+
+            if entry_px and entry_px > 0 and last_price > 0:
+                if net_current_sz > 0:  # 多头
+                    pnl_pct = (last_price - entry_px) / entry_px
+                else:  # 空头
+                    pnl_pct = (entry_px - last_price) / entry_px
+
+                ladder_tp_diag["pnl_pct"] = round(pnl_pct, 6)
+
+                tier = 0
+                cap_ratio = 1.0
+                if pnl_pct >= Config.LADDER_TP_TIER2_PCT:
+                    tier = 2
+                    cap_ratio = Config.LADDER_TP_TIER2_CAP
+                elif pnl_pct >= Config.LADDER_TP_TIER1_PCT:
+                    tier = 1
+                    cap_ratio = Config.LADDER_TP_TIER1_CAP
+
+                # 单向棘轮：锁定历史达到的最高阶梯（只允许仓位上限变紧，绝不放宽回补）
+                with self._lock:
+                    prev_ratchet = self._ladder_tp_ratchet.get(inst_id, 1.0)
+                    effective_cap = min(prev_ratchet, cap_ratio)
+                    if tier > 0:
+                        self._ladder_tp_ratchet[inst_id] = effective_cap
+
+                if effective_cap < 1.0:
+                    ladder_tp_diag["triggered"] = True
+                    ladder_tp_diag["tier"] = 2 if effective_cap <= Config.LADDER_TP_TIER2_CAP else 1
+                    ladder_tp_diag["cap_ratio"] = effective_cap
+
+                    # 目标张数压缩：不得高于 raw_target_sz * effective_cap
+                    max_allowed_sz = abs(target_held_sz) * effective_cap
+                    # 单向棘轮约束：目标张数不得大于当前净持仓（防止价格回调时反向回补追买）
+                    capped_abs_sz = min(abs(net_current_sz), max_allowed_sz)
+
+                    from decimal import Decimal, ROUND_DOWN
+                    if lot_sz > 0:
+                        lot_dec = Decimal(str(lot_sz))
+                        capped_dec = Decimal(str(capped_abs_sz))
+                        steps = (capped_dec / lot_dec).to_integral_value(rounding=ROUND_DOWN)
+                        capped_sz = float(steps * lot_dec)
+                    else:
+                        capped_sz = round(capped_abs_sz, 4)
+
+                    if capped_sz < min_sz:
+                        capped_sz = 0.0
+
+                    target_held_sz = capped_sz if target_held_sz > 0 else -capped_sz
+                    ladder_tp_diag["adjusted_target_sz"] = round(target_held_sz, 6)
+
         delta_sz = target_held_sz - net_current_sz
 
         pos_mode = self._get_pos_mode()
@@ -743,14 +841,19 @@ class TradingService:
                 order_pos_side = "net"
 
             # 4.3 交易所硬止损价（基于 Reef Adaptive Harness 动态止损或默认 3% 止损保护）
-            stop_loss_pct = dynamic_sl_pct if harness_params else 0.03
-            if order_side == "buy":
-                sl_price = last_price * (1.0 - stop_loss_pct)
+            # 减仓时（如阶梯止盈）不附带反向硬止损，仅在开新仓、增仓或反转时附带硬止损
+            is_reduction = (target_held_sz * net_current_sz > 0) and (abs(target_held_sz) < abs(net_current_sz))
+            if is_reduction:
+                sl_price_str = None
             else:
-                sl_price = last_price * (1.0 + stop_loss_pct)
-            tick_sz = float(inst_info.get("tickSz", 0.01)) if inst_info else 0.01
-            tick_dec = len(str(tick_sz).split(".")[1]) if "." in str(tick_sz) else 2
-            sl_price_str = f"{sl_price:.{tick_dec}f}"
+                stop_loss_pct = dynamic_sl_pct if harness_params else 0.03
+                if order_side == "buy":
+                    sl_price = last_price * (1.0 - stop_loss_pct)
+                else:
+                    sl_price = last_price * (1.0 + stop_loss_pct)
+                tick_sz = float(inst_info.get("tickSz", 0.01)) if inst_info else 0.01
+                tick_dec = len(str(tick_sz).split(".")[1]) if "." in str(tick_sz) else 2
+                sl_price_str = f"{sl_price:.{tick_dec}f}"
 
             # 4.4 格式化下单数量 sz
             if lot_sz >= 1:
@@ -852,6 +955,7 @@ class TradingService:
             "receipt_id": receipt_id_val,
             "harness": harness_params.to_dict() if harness_params else None,
             "param_warnings": param_warnings if param_warnings else None,
+            "ladder_tp": ladder_tp_diag,
         }
         self.audit.log(audit_event)
 
@@ -867,6 +971,7 @@ class TradingService:
             "side": executed_side,
             "size_detail": size_detail,
             "signal_diag": signal_diag,
+            "ladder_tp": ladder_tp_diag,
             "harness": harness_params.to_dict() if harness_params else None,
             "risk_checks": risk_checks,
             "risk_passed": risk_passed,
@@ -904,6 +1009,7 @@ class TradingService:
 
         with self._lock:
             self._position_cache.pop(inst_id, None)
+            self._ladder_tp_ratchet.pop(inst_id, None)
 
         self.audit.log({
             "event": "close_position",
@@ -942,6 +1048,7 @@ class TradingService:
         bar: str = "1H",
         max_position_pct: float = 0.30,
         interval_seconds: int = 3600,
+        ladder_tp: bool = True,
     ) -> dict:
         """启动自动交易——按固定间隔循环执行信号。"""
         # 实盘安全门禁：检查策略分数
@@ -969,6 +1076,7 @@ class TradingService:
                 "bar": bar,
                 "max_position_pct": max_position_pct,
                 "interval_seconds": interval_seconds,
+                "ladder_tp": ladder_tp,
                 "last_execute_time": None,
                 "next_execute_time": time.time() + 2,  # 2 秒后首次执行
                 "total_executions": 0,
@@ -1045,6 +1153,7 @@ class TradingService:
                     "leverage": self._auto_trade_state["leverage"],
                     "bar": self._auto_trade_state["bar"],
                     "max_position_pct": self._auto_trade_state["max_position_pct"],
+                    "ladder_tp": self._auto_trade_state.get("ladder_tp", True),
                 }
 
             try:

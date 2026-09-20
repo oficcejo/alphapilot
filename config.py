@@ -107,8 +107,12 @@ class Config:
     # ── Reef Phase 3: Grow, Shadow & Commit ─────────────────────────────────
     AUTO_COMMIT_STRATEGY = os.getenv("AUTO_COMMIT_STRATEGY", "0") == "1"    # 是否开启自动无感热替换交付
     SHADOW_MIN_IMPROVEMENT = float(os.getenv("SHADOW_MIN_IMPROVEMENT", "0.03"))  # 影子评估超越基线最小幅度 (3%)
-    EVOLUTION_WORKERS = int(os.getenv("EVOLUTION_WORKERS", "1"))            # 后台进化工作线程数
-
+    # ── 阶梯主动止盈 (Ladder Take Profit) ──────────────────────────────────
+    ENABLE_LADDER_TP = os.getenv("ENABLE_LADDER_TP", "1") == "1"            # 默认开启阶梯主动止盈
+    LADDER_TP_TIER1_PCT = float(os.getenv("LADDER_TP_TIER1_PCT", "0.025"))  # 阶梯1浮盈阈值 2.5%（标的纯价差）
+    LADDER_TP_TIER1_CAP = float(os.getenv("LADDER_TP_TIER1_CAP", "0.65"))   # 阶梯1仓位上限 65%（兑现 35%）
+    LADDER_TP_TIER2_PCT = float(os.getenv("LADDER_TP_TIER2_PCT", "0.045"))  # 阶梯2浮盈阈值 4.5%（标的纯价差）
+    LADDER_TP_TIER2_CAP = float(os.getenv("LADDER_TP_TIER2_CAP", "0.30"))   # 阶梯2仓位上限 30%（兑现 70%，余30%趋势底仓）
 
 # ── 运行时单例 ─────────────────────────────────────────────────────────────
 cfg = Config()

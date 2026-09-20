@@ -19,6 +19,7 @@ class TradeRequest(BaseModel):
     leverage: int = Config.DEFAULT_LEVERAGE
     bar: str = "1H"
     max_position_pct: float = Config.MAX_POSITION_PCT
+    ladder_tp: bool = True
 
 
 @router.get("/status")
@@ -50,6 +51,7 @@ async def execute_signal(req: TradeRequest):
             leverage=req.leverage,
             bar=req.bar,
             max_position_pct=req.max_position_pct,
+            ladder_tp=req.ladder_tp,
         )
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
@@ -76,6 +78,7 @@ class AutoTradeRequest(BaseModel):
     bar: str = "1H"
     max_position_pct: float = Config.MAX_POSITION_PCT
     interval_seconds: int = 3600
+    ladder_tp: bool = True
 
 
 @router.post("/auto/start")
@@ -90,6 +93,7 @@ async def start_auto_trade(req: AutoTradeRequest):
             bar=req.bar,
             max_position_pct=req.max_position_pct,
             interval_seconds=req.interval_seconds,
+            ladder_tp=req.ladder_tp,
         )
     except Exception as e:
         raise HTTPException(500, f"启动自动交易失败: {e}")
@@ -135,4 +139,9 @@ async def get_trading_config():
         "cost_rate": Config.COST_RATE,
         "slippage": Config.SLIPPAGE,
         "total_cost_rate": Config.COST_RATE + Config.SLIPPAGE,
+        "enable_ladder_tp": Config.ENABLE_LADDER_TP,
+        "ladder_tp_tier1_pct": Config.LADDER_TP_TIER1_PCT,
+        "ladder_tp_tier1_cap": Config.LADDER_TP_TIER1_CAP,
+        "ladder_tp_tier2_pct": Config.LADDER_TP_TIER2_PCT,
+        "ladder_tp_tier2_cap": Config.LADDER_TP_TIER2_CAP,
     }
