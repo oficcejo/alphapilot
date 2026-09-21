@@ -435,3 +435,28 @@ def test_ladder_tp_reduction_not_blocked_by_available_balance(mock_trading_servi
             assert float(call_kwargs["sz"]) > 0
 
 
+def test_auto_trade_status_strategy_name(mock_trading_service):
+    """测试 get_auto_trade_status 与 get_runtime_status 能正确返回 strategy_name 与 auto_trade 状态。"""
+    service = mock_trading_service
+    service._auto_trade_state = {
+        "running": True,
+        "strategy_path": "/var/data/strategies/best_ETH-USDT-SWAP.json",
+        "inst_id": "ETH-USDT-SWAP",
+        "capital": 1000.0,
+        "leverage": 5,
+        "bar": "1H",
+        "max_position_pct": 0.30,
+        "interval_seconds": 3600,
+        "ladder_tp": True,
+        "started_at": 1700000000,
+    }
+    status = service.get_auto_trade_status()
+    assert status["running"] is True
+    assert status["strategy_name"] == "best_ETH-USDT-SWAP.json"
+    assert status["inst_id"] == "ETH-USDT-SWAP"
+
+    rt = service.get_runtime_status()
+    assert "auto_trade" in rt
+    assert rt["auto_trade"]["strategy_name"] == "best_ETH-USDT-SWAP.json"
+
+

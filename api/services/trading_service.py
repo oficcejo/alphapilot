@@ -177,6 +177,12 @@ class TradingService:
         except Exception:
             pass
 
+        # 自动交易运行状态
+        try:
+            status["auto_trade"] = self.get_auto_trade_status()
+        except Exception:
+            status["auto_trade"] = None
+
         return status
 
     def get_audit_log(self, n: int = 50) -> list[dict]:
@@ -1139,6 +1145,8 @@ class TradingService:
     def get_auto_trade_status(self) -> dict:
         """获取自动交易状态。"""
         state = self._auto_trade_state.copy()
+        if state.get("strategy_path"):
+            state["strategy_name"] = pathlib.Path(state["strategy_path"]).name
         if state.get("next_execute_time"):
             state["next_execute_in"] = max(0, int(state["next_execute_time"] - time.time()))
         if state.get("started_at"):

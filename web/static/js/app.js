@@ -1164,8 +1164,13 @@ delete_history: true,
                   构建组合
                 </button>
               </div>
+            <div class="form-group">
+              <label class="form-label flex items-center justify-between">
+                <span>策略文件</span>
+                <span id="tr-strategy-running-hint" class="badge badge-success" style="display:none;font-size:11px;font-weight:normal;padding:2px 6px">● 自动运行中: <span id="tr-strategy-running-text" style="margin-left:2px;font-weight:600">-</span></span>
+              </label>
+              <select class="form-select" id="tr-strategy">${stratOpts}</select>
             </div>
-            <div class="form-group"><label class="form-label">策略文件</label><select class="form-select" id="tr-strategy">${stratOpts}</select></div>
             <div class="form-group"><label class="form-label">合约 ID</label><input class="form-input" id="tr-inst-id" value="BTC-USDT-SWAP"></div>
             <div class="form-row">
               <div class="form-group"><label class="form-label">本金 (USDT) <button class="btn btn-sm" onclick="App.useAccountBalance()" style="margin-left:8px;padding:2px 8px">使用余额</button></label><input class="form-input" id="tr-capital" type="number" value="${config.default_capital}" step="10"></div>
@@ -1228,6 +1233,22 @@ delete_history: true,
               </button>
             </div>
             <div id="at-detail" style="display:none">
+              <!-- 当前运行策略与参数信息 -->
+              <div style="background:var(--bg-primary);border:1px solid rgba(16,185,129,0.35);border-left:4px solid var(--green);border-radius:6px;padding:10px 12px;margin-bottom:12px">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs text-muted" style="font-weight:600">当前运行策略</span>
+                  <span class="badge badge-success" style="font-size:10px">自动运行中</span>
+                </div>
+                <div class="text-mono" style="font-size:14px;font-weight:600;color:var(--green);margin-top:4px;word-break:break-all" id="at-running-strat-name">-</div>
+                <div class="text-xs text-muted mt-2 flex flex-wrap gap-x-3 gap-y-1" style="border-top:1px dashed var(--border);padding-top:6px" id="at-running-params">
+                  <span>标的: <b id="at-running-inst" style="color:var(--text-primary)">-</b></span>
+                  <span>周期: <b id="at-running-bar" style="color:var(--text-primary)">-</b></span>
+                  <span>杠杆: <b id="at-running-leverage" style="color:var(--text-primary)">-</b></span>
+                  <span>本金: <b id="at-running-capital" style="color:var(--text-primary)">-</b></span>
+                  <span>阶梯止盈: <b id="at-running-ladder" style="color:var(--text-primary)">-</b></span>
+                </div>
+              </div>
+
               <!-- 当前信号状态 -->
               <div id="at-signal-box" style="text-align:center;padding:12px;border-radius:8px;background:var(--bg-primary);margin-top:8px;border:1px solid var(--border)">
                 <div class="stat-label">最新信号</div>
@@ -1621,7 +1642,20 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
         </div>
       ` : '';
 
-      area.innerHTML = acctHtml + drHtml + posHtml + statsHtml;
+      const at = r.auto_trade;
+      const atStrat = at ? (at.strategy_name || (at.strategy_path ? at.strategy_path.split(/[\\/]/).pop() : '')) : '';
+      const atHtml = (at && at.running) ? `
+        <div class="flex items-center justify-between mt-2 mb-3" style="background:var(--bg-primary);padding:10px 14px;border-radius:6px;border:1px solid rgba(16,185,129,0.3);border-left:4px solid var(--green)">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="badge badge-success" style="font-size:11px">自动执行中</span>
+            <span class="text-sm font-mono" style="font-weight:600;color:var(--green)">${atStrat}</span>
+            <span class="text-xs text-muted">(${at.inst_id} | ${at.bar} | ${at.leverage}x | 间隔 ${at.interval_seconds}s)</span>
+          </div>
+          <span class="text-xs text-muted">${at.next_execute_in !== undefined ? `${at.next_execute_in}秒后下次执行` : ''}</span>
+        </div>
+      ` : '';
+
+      area.innerHTML = atHtml + acctHtml + drHtml + posHtml + statsHtml;
       const timeEl = document.getElementById('rt-update-time');
       if (timeEl) timeEl.textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN');
     } catch (e) {
@@ -1635,7 +1669,10 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
     if (cb.checked) {
       // 启动自动刷新（复用 pollTimer，离开页面时 navigate 会清除）
       if (this.pollTimer) clearInterval(this.pollTimer);
-      this.pollTimer = setInterval(() => this.refreshRuntimeStatus(), 5000);
+      this.pollTimer = setInterval(() => {
+        this.refreshRuntimeStatus();
+        this.refreshAutoTradeStatus();
+      }, 5000);
       toast('运行状态自动刷新已开启（5秒）', 'info');
     } else {
       if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
@@ -1714,6 +1751,35 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
         badge.className = 'badge badge-success';
         if (controls) controls.style.display = 'none';
         if (detail) detail.style.display = 'block';
+
+        const atIntervalInp = document.getElementById('at-interval');
+        if (atIntervalInp) {
+          atIntervalInp.disabled = true;
+          if (s.interval_seconds) atIntervalInp.value = s.interval_seconds;
+        }
+
+        // 当前运行策略及参数显示
+        const stratName = s.strategy_name || (s.strategy_path ? s.strategy_path.split(/[\\/]/).pop() : '-');
+        const stratNameEl = document.getElementById('at-running-strat-name');
+        if (stratNameEl) {
+          stratNameEl.textContent = stratName;
+          stratNameEl.title = s.strategy_path || '';
+        }
+        const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setTxt('at-running-inst', s.inst_id || '-');
+        setTxt('at-running-bar', s.bar || '-');
+        setTxt('at-running-leverage', s.leverage ? `${s.leverage}x` : '-');
+        setTxt('at-running-capital', s.capital !== undefined ? `${s.capital} USDT` : '-');
+        setTxt('at-running-ladder', s.ladder_tp !== false ? '已启用 (2.5%/4.5%)' : '未启用');
+
+        // 左侧交易配置卡片策略运行提示
+        const hint = document.getElementById('tr-strategy-running-hint');
+        const hintText = document.getElementById('tr-strategy-running-text');
+        if (hint && hintText) {
+          hint.style.display = 'inline-flex';
+          hintText.textContent = stratName;
+          hint.title = `后台自动交易正在运行: ${s.strategy_path || stratName}`;
+        }
 
         // 统计计数
         const elTotal = document.getElementById('at-total');
@@ -1796,6 +1862,12 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
         badge.className = 'badge badge-muted';
         if (controls) controls.style.display = 'block';
         if (detail) detail.style.display = 'none';
+
+        const atIntervalInp = document.getElementById('at-interval');
+        if (atIntervalInp) atIntervalInp.disabled = false;
+
+        const hint = document.getElementById('tr-strategy-running-hint');
+        if (hint) hint.style.display = 'none';
       }
     } catch (e) { /* silent */ }
   },
