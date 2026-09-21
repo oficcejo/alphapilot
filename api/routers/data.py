@@ -58,7 +58,7 @@ async def get_instruments(inst_type: str = "SWAP"):
 class DownloadRequest(BaseModel):
     symbol: str
     bar: str = "1H"
-    total_bars: int = 2000
+    total_bars: int = 8000
 
 
 @router.post("/download")
@@ -74,7 +74,7 @@ async def download_data(req: DownloadRequest):
 class DownloadMultiRequest(BaseModel):
     symbols: list[str]
     bar: str = "1H"
-    total_bars: int = 2000
+    total_bars: int = 8000
 
 
 @router.post("/download-multi")

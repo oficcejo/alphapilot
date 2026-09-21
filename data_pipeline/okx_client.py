@@ -240,7 +240,7 @@ class OKXClient:
         self,
         inst_id: str,
         bar: str = "1H",
-        total_bars: int = 2000,
+        total_bars: int = 8000,
     ) -> list[list]:
         """分页下载大量 K 线数据。
 

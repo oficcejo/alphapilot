@@ -51,7 +51,7 @@ def discover_swap_instruments(client: OKXClient | None = None) -> list[dict]:
 def download_symbol_data(
     symbol: str,
     bar: str = "1H",
-    total_bars: int = 2000,
+    total_bars: int = 8000,
     client: OKXClient | None = None,
 ) -> dict:
     """下载某品种的 K 线数据并保存为 Parquet。
@@ -85,7 +85,7 @@ def download_symbol_data(
 def download_multi_symbols(
     symbols: list[str],
     bar: str = "1H",
-    total_bars: int = 2000,
+    total_bars: int = 8000,
 ) -> list[dict]:
     """批量下载多个品种。"""
     results = []

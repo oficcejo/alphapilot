@@ -1875,13 +1875,13 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
                 <option value="1D">日线</option>
                 <option value="1W">周线</option>
               </select></div>
-              <div class="form-group"><label class="form-label">K线数量</label><input class="form-input" id="dl-total" type="number" value="2000" min="100" max="10000"></div>
+              <div class="form-group"><label class="form-label">K线数量</label><input class="form-input" id="dl-total" type="number" value="8000" min="100" max="20000"></div>
             </div>
             <button class="btn btn-primary w-full" onclick="App.downloadData()">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
               下载并加入训练列表
             </button>
-            <div class="disclosure">支持加密资产(BTC/ETH)、贵金属(XAU)、指数(SPX)、股票(AAPL)等 TradFi 品种。可用性取决于 OKX 区域和账户权限。</div>
+            <div class="disclosure">支持加密资产(BTC/ETH)、贵金属(XAU)、指数(SPX)、股票(AAPL)等 TradFi 品种。可用性取决于 OKX 区域和账户权限。<div style="margin-top:4px;color:var(--text-accent, #10b981);font-weight:500">💡 提示：推荐训练数据下载 6000-8000 根 K 线，推荐 15m 以上周期。</div></div>
           </div>
 
           <div class="card">
@@ -1997,7 +1997,7 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
 
   async quickDownload(instId) {
     const bar = document.getElementById('dl-bar')?.value || '1H';
-    const total = parseInt(document.getElementById('dl-total')?.value || '2000');
+    const total = parseInt(document.getElementById('dl-total')?.value || '8000');
     toast(`快速下载 ${instId} ${bar}...`, 'info');
     try {
       const r = await fetchJSON(`${API}/data/download`, {
