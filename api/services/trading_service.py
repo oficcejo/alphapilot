@@ -750,21 +750,40 @@ class TradingService:
                     })
 
         # 5.5 保证金充足性检查
-        if risk_passed and target_held_sz != 0 and account_avail is not None:
-            required_margin = abs(target_value) / leverage if leverage > 0 else abs(target_value)
-            if account_avail < required_margin and abs(delta_sz) > 0:
-                risk_checks.append({
-                    "check": "margin_sufficiency",
-                    "passed": False,
-                    "msg": f"可用余额 {account_avail:.2f} USDT < 所需保证金 {required_margin:.2f} USDT",
-                })
-                risk_passed = False
-            else:
+        # 规则说明：
+        # a) 减仓/平仓（同向减持或完全清仓）只会释放保证金并落袋盈亏，绝不消耗可用余额，无条件放行；
+        # b) 同向加仓仅校验增量 delta_sz 所需的新增保证金；
+        # c) 空仓新开或反向开仓，校验目标名义仓位所需保证金。
+        if risk_passed and account_avail is not None and abs(delta_sz) > 0:
+            is_reduction = (target_held_sz * net_current_sz > 0 and abs(target_held_sz) <= abs(net_current_sz)) or (target_held_sz == 0 and net_current_sz != 0)
+            if is_reduction:
                 risk_checks.append({
                     "check": "margin_sufficiency",
                     "passed": True,
-                    "msg": f"可用余额 {account_avail:.2f} USDT ≥ 所需保证金 {required_margin:.2f} USDT",
+                    "msg": f"减仓/止盈操作释放保证金，当前可用余额 {account_avail:.2f} USDT 充足",
                 })
+            else:
+                if target_held_sz * net_current_sz > 0 and abs(target_held_sz) > abs(net_current_sz):
+                    # 同向增仓，只需校验新增增量部分的保证金
+                    incremental_value = abs(delta_sz) * ct_val * last_price
+                    required_margin = incremental_value / leverage if leverage > 0 else incremental_value
+                else:
+                    # 空仓新开或反向开仓
+                    required_margin = abs(target_value) / leverage if leverage > 0 else abs(target_value)
+
+                if account_avail < required_margin:
+                    risk_checks.append({
+                        "check": "margin_sufficiency",
+                        "passed": False,
+                        "msg": f"可用余额 {account_avail:.2f} USDT < 所需保证金 {required_margin:.2f} USDT",
+                    })
+                    risk_passed = False
+                else:
+                    risk_checks.append({
+                        "check": "margin_sufficiency",
+                        "passed": True,
+                        "msg": f"可用余额 {account_avail:.2f} USDT ≥ 所需保证金 {required_margin:.2f} USDT",
+                    })
 
         # 6. Delta 状态机执行调仓
         order_result = None

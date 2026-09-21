@@ -369,3 +369,69 @@ def test_runtime_status_extracts_upl_and_margin(mock_trading_service):
         assert acct["upl"] == -0.82
         assert acct["margin"] == 61.98
         assert acct["margin_ratio"] > 0.50  # 约 54.35%
+
+
+def test_ladder_tp_reduction_not_blocked_by_available_balance(mock_trading_service):
+    """测试当持仓较重、可用保证金较低时，阶梯减仓/止盈不会被保证金充足性风控误拦截。"""
+    service = mock_trading_service
+    service._position_cache.clear()
+    service._ladder_tp_ratchet.clear()
+
+    # 模拟持有多头 5.83 张 ETH，开仓价 2698.14，最新价 2782.94（浮盈 +3.14%）
+    # 账户权益 516 USDT，已用保证金 323 USDT，可用余额仅 193 USDT
+    mock_client = MagicMock()
+    mock_client.get_account_summary.return_value = {
+        "total_eq": 516.0,
+        "avail_bal": 193.0,  # 可用余额小于目标仓位总保证金 (约 198.7 USDT)
+    }
+    mock_client.get_positions_detail.return_value = [
+        {
+            "inst_id": "ETH-USDT-SWAP",
+            "pos_side": "net",
+            "pos": 5.83,
+            "avg_px": 2698.14,
+            "last": 2782.94,
+            "margin": 323.0,
+            "lever": 5.0,
+        }
+    ]
+    mock_client.get_instrument.return_value = {
+        "ctVal": "0.1",
+        "lotSz": "0.01",
+        "minSz": "0.01",
+        "ctValCcy": "ETH",
+    }
+    mock_client.place_order.return_value = {"ordId": "tp_order_123"}
+
+    candles = [[str(1600000000000 + i * 900000), "2698.14", "2782.94", "2690.0", "2782.94", "100", "", "", "1"] for i in range(800)]
+    mock_client.get_recent_candles.return_value = candles
+
+    with patch("api.services.trading_service.get_private_client", return_value=mock_client), \
+         patch("api.services.trading_service.get_public_client", return_value=mock_client), \
+         patch("api.services.trading_service.load_strategy", return_value={"formula": [0, 69], "formula_decoded": "TEST", "best_score": 2.5}), \
+         patch("api.services.trading_service.eval_strategy_factor", return_value=torch.zeros(1, 800)), \
+         patch("api.services.trading_service.compute_target_positions_stateless", return_value=torch.tensor([[0.80]])):
+        with patch.object(Config, "TRADING_MODE", "live"):
+            res = service.execute_signal(
+                strategy_path="dummy.json",
+                inst_id="ETH-USDT-SWAP",
+                capital=474.96,
+                leverage=5,
+                bar="1H",
+                max_position_pct=0.80,
+                ladder_tp=True,
+            )
+
+            # 验证风控必须通过（不应被误判为保证金不足）
+            assert res["risk_passed"] is True
+            # 阶梯 1 必须触发 (限仓 65%)
+            assert res["ladder_tp"]["triggered"] is True
+            assert res["ladder_tp"]["tier"] == 1
+            # 目标张数压缩，应执行卖出减仓
+            assert res["delta_sz"] < 0
+            mock_client.place_order.assert_called_once()
+            call_kwargs = mock_client.place_order.call_args.kwargs
+            assert call_kwargs["side"] == "sell"
+            assert float(call_kwargs["sz"]) > 0
+
+
