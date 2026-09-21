@@ -257,6 +257,7 @@ const App = {
                     <option value="forex">Forex（均值回归）</option>
                   </select>
                 </div>
+              </div>
               <div class="flex gap-2 mt-4">
                 <button class="btn btn-primary flex-1" onclick="App.startTraining()">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><circle cx="12" cy="12" r="9"/></svg>
@@ -1164,6 +1165,7 @@ delete_history: true,
                   构建组合
                 </button>
               </div>
+            </div>
             <div class="form-group">
               <label class="form-label flex items-center justify-between">
                 <span>策略文件</span>
