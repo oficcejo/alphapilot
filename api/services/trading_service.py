@@ -90,6 +90,8 @@ class TradingService:
         self._ladder_tp_ratchet: dict[str, float] = {}
         # 阶梯主动止盈基准持仓跟踪：inst_id -> 触发止盈前的基准总持仓张数
         self._ladder_tp_base_sz: dict[str, float] = {}
+        # 高水位价格跟踪：inst_id -> 开仓以来的极值价格（多头为最高价，空头为最低价）
+        self._peak_price: dict[str, float] = {}
 
     # ── 状态查询 ──────────────────────────────────────────────────────────
 
@@ -623,14 +625,17 @@ class TradingService:
             "adjusted_target_sz": round(target_held_sz, 6),
         }
 
-        # 仓位归零或反向时，重置单向棘轮与基准持仓
+        # 仓位归零或反向时，重置单向棘轮、基准持仓与高水位极值价格
         if abs(net_current_sz) == 0 or (target_held_sz * net_current_sz < 0):
             with self._lock:
                 self._ladder_tp_ratchet.pop(inst_id, None)
                 self._ladder_tp_base_sz.pop(inst_id, None)
+                self._peak_price.pop(inst_id, None)
         elif target_held_sz != 0 and self._ladder_tp_ratchet.get(inst_id, 1.0) == 1.0:
             with self._lock:
                 self._ladder_tp_base_sz[inst_id] = max(abs(net_current_sz), abs(target_held_sz))
+                if inst_id not in self._peak_price and last_price > 0:
+                    self._peak_price[inst_id] = last_price
 
         if use_ladder_tp and net_current_sz != 0 and (target_held_sz * net_current_sz > 0):
             # 已有持仓且信号同向（顺势持仓中）：检测纯标的价差浮盈
@@ -1046,6 +1051,7 @@ class TradingService:
             self._position_cache.pop(inst_id, None)
             self._ladder_tp_ratchet.pop(inst_id, None)
             self._ladder_tp_base_sz.pop(inst_id, None)
+            self._peak_price.pop(inst_id, None)
 
         self.audit.log({
             "event": "close_position",
@@ -1133,7 +1139,107 @@ class TradingService:
         else:  # 空头
             pnl_pct = (entry_px - last_price) / entry_px
 
-        # 匹配阶梯
+        # 动态维护极值价格（多头最高价，空头最低价）
+        with self._lock:
+            if net_current_sz > 0:
+                self._peak_price[inst_id] = max(self._peak_price.get(inst_id, last_price), last_price)
+            else:
+                self._peak_price[inst_id] = min(self._peak_price.get(inst_id, last_price), last_price)
+            peak_px = self._peak_price[inst_id]
+            prev_ratchet = self._ladder_tp_ratchet.get(inst_id, 1.0)
+
+        # ── 1. 高水位动态追踪止损 (High-Water Trailing Stop) ─────────────────
+        # 条件：开启追踪止损 且 阶梯止盈已达到 Tier 2 (仓位已被限至 30% 趋势底仓)
+        if getattr(Config, "ENABLE_TRAILING_SL", True) and prev_ratchet <= Config.LADDER_TP_TIER2_CAP:
+            trailing_cb = getattr(Config, "TRAILING_STOP_CALLBACK_PCT", 0.025)
+            trailing_triggered = False
+            trailing_sl_px = 0.0
+
+            if net_current_sz > 0:  # 多头
+                # 追踪止损线 = max(峰值回撤2.5%, 锁定Tier 1利润线)
+                trailing_sl_px = max(peak_px * (1.0 - trailing_cb), entry_px * (1.0 + Config.LADDER_TP_TIER1_PCT))
+                if last_price <= trailing_sl_px:
+                    trailing_triggered = True
+            else:  # 空头
+                trailing_sl_px = min(peak_px * (1.0 + trailing_cb), entry_px * (1.0 - Config.LADDER_TP_TIER1_PCT))
+                if last_price >= trailing_sl_px:
+                    trailing_triggered = True
+
+            if trailing_triggered:
+                # 触发追踪止损：全平剩余趋势底仓并撤销所有挂单
+                close_res = self.close_position(inst_id)
+                with self._lock:
+                    if self._auto_trade_state.get("running"):
+                        self._auto_trade_state["total_orders"] = self._auto_trade_state.get("total_orders", 0) + 1
+                        self._auto_trade_state["last_exit"] = {
+                            "type": "trailing_sl",
+                            "time": time.time(),
+                            "exit_price": last_price,
+                            "entry_px": entry_px,
+                            "peak_price": peak_px,
+                            "trailing_sl_px": round(trailing_sl_px, 4),
+                            "pnl_pct": round(pnl_pct, 6),
+                        }
+
+                audit_data = {
+                    "event": "trailing_stop_loss_trigger",
+                    "inst_id": inst_id,
+                    "entry_px": entry_px,
+                    "peak_price": peak_px,
+                    "trailing_sl_px": round(trailing_sl_px, 4),
+                    "exit_price": last_price,
+                    "pnl_pct": round(pnl_pct, 6),
+                    "held_sz": round(net_current_sz, 6),
+                    "result": close_res,
+                }
+                self.audit.log(audit_data)
+                return audit_data
+
+        # ── 2. 保本止损联动 (Breakeven Stop Loss) ────────────────────────────
+        # 条件：开启保本止损 且 阶梯止盈已达到 Tier 1 (仓位已被限至 65%)
+        if getattr(Config, "ENABLE_BREAKEVEN_SL", True) and prev_ratchet <= Config.LADDER_TP_TIER1_CAP:
+            be_buffer = getattr(Config, "BREAKEVEN_BUFFER_PCT", 0.0015)
+            be_triggered = False
+            be_sl_px = 0.0
+
+            if net_current_sz > 0:  # 多头
+                be_sl_px = entry_px * (1.0 + be_buffer)
+                if last_price <= be_sl_px:
+                    be_triggered = True
+            else:  # 空头
+                be_sl_px = entry_px * (1.0 - be_buffer)
+                if last_price >= be_sl_px:
+                    be_triggered = True
+
+            if be_triggered:
+                # 触发保本止损：全平剩余仓位并撤销挂单，彻底消灭亏损
+                close_res = self.close_position(inst_id)
+                with self._lock:
+                    if self._auto_trade_state.get("running"):
+                        self._auto_trade_state["total_orders"] = self._auto_trade_state.get("total_orders", 0) + 1
+                        self._auto_trade_state["last_exit"] = {
+                            "type": "breakeven_sl",
+                            "time": time.time(),
+                            "exit_price": last_price,
+                            "entry_px": entry_px,
+                            "breakeven_price": round(be_sl_px, 4),
+                            "pnl_pct": round(pnl_pct, 6),
+                        }
+
+                audit_data = {
+                    "event": "breakeven_stop_loss_trigger",
+                    "inst_id": inst_id,
+                    "entry_px": entry_px,
+                    "breakeven_price": round(be_sl_px, 4),
+                    "exit_price": last_price,
+                    "pnl_pct": round(pnl_pct, 6),
+                    "held_sz": round(net_current_sz, 6),
+                    "result": close_res,
+                }
+                self.audit.log(audit_data)
+                return audit_data
+
+        # ── 3. 匹配阶梯主动止盈 ──────────────────────────────────────────────
         tier = 0
         cap_ratio = 1.0
         if pnl_pct >= Config.LADDER_TP_TIER2_PCT:
@@ -1299,6 +1405,7 @@ class TradingService:
                 "interval_seconds": interval_seconds,
                 "ladder_tp": ladder_tp,
                 "last_ladder_tp": None,
+                "last_exit": None,
                 "last_execute_time": None,
                 "next_execute_time": time.time() + 2,  # 2 秒后首次执行
                 "total_executions": 0,
@@ -1346,6 +1453,15 @@ class TradingService:
         if inst_id:
             state["ladder_tp_ratchet"] = self._ladder_tp_ratchet.get(inst_id, 1.0)
             state["ladder_tp_base_sz"] = self._ladder_tp_base_sz.get(inst_id, 0.0)
+            state["peak_price"] = self._peak_price.get(inst_id)
+            state["breakeven_sl_active"] = (
+                getattr(Config, "ENABLE_BREAKEVEN_SL", True)
+                and self._ladder_tp_ratchet.get(inst_id, 1.0) <= Config.LADDER_TP_TIER1_CAP
+            )
+            state["trailing_sl_active"] = (
+                getattr(Config, "ENABLE_TRAILING_SL", True)
+                and self._ladder_tp_ratchet.get(inst_id, 1.0) <= Config.LADDER_TP_TIER2_CAP
+            )
         if state.get("strategy_path"):
             state["strategy_name"] = pathlib.Path(state["strategy_path"]).name
         if state.get("next_execute_time"):

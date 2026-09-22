@@ -114,5 +114,11 @@ class Config:
     LADDER_TP_TIER2_PCT = float(os.getenv("LADDER_TP_TIER2_PCT", "0.045"))  # 阶梯2浮盈阈值 4.5%（标的纯价差）
     LADDER_TP_TIER2_CAP = float(os.getenv("LADDER_TP_TIER2_CAP", "0.30"))   # 阶梯2仓位上限 30%（兑现 70%，余30%趋势底仓）
 
+    # ── 保本止损与高水位追踪止损 (Breakeven & Trailing Stop Loss) ──────────────
+    ENABLE_BREAKEVEN_SL = os.getenv("ENABLE_BREAKEVEN_SL", "1") == "1"      # 触发Tier 1后自动启用保本止损
+    BREAKEVEN_BUFFER_PCT = float(os.getenv("BREAKEVEN_BUFFER_PCT", "0.0015"))  # 保本安全垫 0.15% (覆盖手续费与滑点)
+    ENABLE_TRAILING_SL = os.getenv("ENABLE_TRAILING_SL", "1") == "1"        # 触发Tier 2后对剩余30%底仓启用高水位追踪
+    TRAILING_STOP_CALLBACK_PCT = float(os.getenv("TRAILING_STOP_CALLBACK_PCT", "0.025"))  # 高位回撤回调比例 2.5%
+
 # ── 运行时单例 ─────────────────────────────────────────────────────────────
 cfg = Config()

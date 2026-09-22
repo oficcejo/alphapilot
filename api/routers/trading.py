@@ -144,4 +144,8 @@ async def get_trading_config():
         "ladder_tp_tier1_cap": Config.LADDER_TP_TIER1_CAP,
         "ladder_tp_tier2_pct": Config.LADDER_TP_TIER2_PCT,
         "ladder_tp_tier2_cap": Config.LADDER_TP_TIER2_CAP,
+        "enable_breakeven_sl": Config.ENABLE_BREAKEVEN_SL,
+        "breakeven_buffer_pct": Config.BREAKEVEN_BUFFER_PCT,
+        "enable_trailing_sl": Config.ENABLE_TRAILING_SL,
+        "trailing_stop_callback_pct": Config.TRAILING_STOP_CALLBACK_PCT,
     }

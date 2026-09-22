@@ -1778,8 +1778,10 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
         setTxt('at-running-capital', s.capital !== undefined ? `${s.capital} USDT` : '-');
         let ladderDesc = '未启用';
         if (s.ladder_tp !== false) {
-          if (s.ladder_tp_ratchet && s.ladder_tp_ratchet < 1.0) {
-            ladderDesc = `已锁死止盈 (限仓 ${(s.ladder_tp_ratchet * 100).toFixed(0)}%)`;
+          if (s.trailing_sl_active) {
+            ladderDesc = `动态追踪止损中 (底仓 30% / 峰值 $${s.peak_price || '-'})`;
+          } else if (s.breakeven_sl_active) {
+            ladderDesc = `已锁死保本止损 (限仓 ${(s.ladder_tp_ratchet * 100).toFixed(0)}%)`;
           } else {
             ladderDesc = '5秒实时监听 (+2.5%/+4.5%)';
           }
@@ -1868,8 +1870,14 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
         const elLast = document.getElementById('at-last-info');
         const nextIn = s.next_execute_in ? `${s.next_execute_in}秒后执行` : '-';
         const lastTime = s.last_execute_time ? new Date(s.last_execute_time * 1000).toLocaleTimeString('zh-CN') : '-';
-        let lastInfo = `上次: ${lastTime} | 下次: ${nextIn}`;
-        if (s.last_ladder_tp) {
+        if (s.last_exit) {
+          const leTime = new Date(s.last_exit.time * 1000).toLocaleTimeString('zh-CN');
+          if (s.last_exit.type === 'trailing_sl') {
+            lastInfo += ` | <span class="text-success">高水位追踪止损已触发(${leTime}, 峰值$${s.last_exit.peak_price}, 平仓$${s.last_exit.exit_price})</span>`;
+          } else if (s.last_exit.type === 'breakeven_sl') {
+            lastInfo += ` | <span class="text-warning">保本止损已触发(${leTime}, 平仓$${s.last_exit.exit_price}, 零亏损安全出场)</span>`;
+          }
+        } else if (s.last_ladder_tp) {
           const ltpTime = new Date(s.last_ladder_tp.time * 1000).toLocaleTimeString('zh-CN');
           lastInfo += ` | <span class="text-success">阶梯T${s.last_ladder_tp.tier}止盈已触发(${ltpTime}, 减仓至${(s.last_ladder_tp.cap_ratio * 100).toFixed(0)}%)</span>`;
         }
