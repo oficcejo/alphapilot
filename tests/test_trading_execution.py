@@ -460,3 +460,119 @@ def test_auto_trade_status_strategy_name(mock_trading_service):
     assert rt["auto_trade"]["strategy_name"] == "best_ETH-USDT-SWAP.json"
 
 
+def test_realtime_ladder_tp_triggers_and_ratchets(mock_trading_service):
+    """测试独立高频实时阶梯止盈：
+    1. 盘中涨幅达到 Tier 1 (+2.8% >= +2.5%) 触发减仓至 65%；
+    2. 价格在 Tier 1 区间微幅波动 (+3.0%) 时单向棘轮防止重复下单；
+    3. 价格继续冲高至 Tier 2 (+4.8% >= +4.5%) 触发第二级减仓至 30%；
+    4. 价格剧烈冲高回落 (+0.4%) 时，单向棘轮锁定持仓在 30%，绝不反向回补。
+    """
+    service = mock_trading_service
+    service._position_cache.clear()
+    service._ladder_tp_ratchet.clear()
+    service._ladder_tp_base_sz.clear()
+
+    # 初始持多单 1.0 张，开仓均价 2500.0
+    mock_client = MagicMock()
+    mock_client.get_positions_detail.return_value = [
+        {"inst_id": "ETH-USDT-SWAP", "pos_side": "long", "pos": 1.0, "avg_px": 2500.0}
+    ]
+    mock_client.place_order.return_value = {"ordId": "tp_1", "live": True}
+
+    with patch("api.services.trading_service.get_private_client", return_value=mock_client), \
+         patch("api.services.trading_service.get_public_client", return_value=mock_client):
+
+        # ── 阶段 1: 价格上涨至 2570 (+2.8%)，首次触发 Tier 1 ──
+        mock_client.get_ticker.return_value = {"last": "2570.0"}
+        with patch.object(Config, "TRADING_MODE", "live"):
+            res1 = service.check_realtime_ladder_tp("ETH-USDT-SWAP")
+
+        assert res1 is not None
+        assert res1["tier"] == 1
+        assert res1["cap_ratio"] == 0.65
+        assert res1["target_held_sz"] == 0.65
+        assert res1["order_sz"] == 0.35
+        assert service._ladder_tp_ratchet["ETH-USDT-SWAP"] == 0.65
+        mock_client.place_order.assert_called_once()
+        args1 = mock_client.place_order.call_args.kwargs
+        assert args1["side"] == "sell"
+        assert args1["pos_side"] == "long"
+        assert args1["sz"] == "0.35"
+
+        # ── 阶段 2: 持仓已变为 0.65，价格微涨至 2575 (+3.0%)，单向棘轮阻止重复下单 ──
+        mock_client.reset_mock()
+        mock_client.get_positions_detail.return_value = [
+            {"inst_id": "ETH-USDT-SWAP", "pos_side": "long", "pos": 0.65, "avg_px": 2500.0}
+        ]
+        mock_client.get_ticker.return_value = {"last": "2575.0"}
+        with patch.object(Config, "TRADING_MODE", "live"):
+            res2 = service.check_realtime_ladder_tp("ETH-USDT-SWAP")
+
+        assert res2 is None
+        mock_client.place_order.assert_not_called()
+
+        # ── 阶段 3: 价格暴涨至 2620 (+4.8%)，触发 Tier 2 (限仓 30%) ──
+        mock_client.reset_mock()
+        mock_client.get_ticker.return_value = {"last": "2620.0"}
+        with patch.object(Config, "TRADING_MODE", "live"):
+            res3 = service.check_realtime_ladder_tp("ETH-USDT-SWAP")
+
+        assert res3 is not None
+        assert res3["tier"] == 2
+        assert res3["cap_ratio"] == 0.30
+        assert res3["target_held_sz"] == 0.30
+        assert res3["order_sz"] == 0.35  # 0.65 - 0.30 = 0.35
+        assert service._ladder_tp_ratchet["ETH-USDT-SWAP"] == 0.30
+        mock_client.place_order.assert_called_once()
+        args3 = mock_client.place_order.call_args.kwargs
+        assert args3["side"] == "sell"
+        assert args3["sz"] == "0.35"
+
+        # ── 阶段 4: 价格暴跌回 2510 (+0.4%)，棘轮保持锁定，不触发任何操作 ──
+        mock_client.reset_mock()
+        mock_client.get_positions_detail.return_value = [
+            {"inst_id": "ETH-USDT-SWAP", "pos_side": "long", "pos": 0.30, "avg_px": 2500.0}
+        ]
+        mock_client.get_ticker.return_value = {"last": "2510.0"}
+        with patch.object(Config, "TRADING_MODE", "live"):
+            res4 = service.check_realtime_ladder_tp("ETH-USDT-SWAP")
+
+        assert res4 is None
+        assert service._ladder_tp_ratchet["ETH-USDT-SWAP"] == 0.30
+        mock_client.place_order.assert_not_called()
+
+
+def test_realtime_ladder_tp_short_position(mock_trading_service):
+    """测试空头仓位的盘中实时阶梯止盈：价格下跌触发买入平空。"""
+    service = mock_trading_service
+    service._position_cache.clear()
+    service._ladder_tp_ratchet.clear()
+    service._ladder_tp_base_sz.clear()
+
+    # 初始持空单 1.0 张，开仓均价 2500.0
+    mock_client = MagicMock()
+    mock_client.get_positions_detail.return_value = [
+        {"inst_id": "ETH-USDT-SWAP", "pos_side": "short", "pos": 1.0, "avg_px": 2500.0}
+    ]
+    mock_client.place_order.return_value = {"ordId": "tp_short_1", "live": True}
+    # 标的价格跌至 2430 (浮盈 (2500-2430)/2500 = +2.8% >= Tier 1)
+    mock_client.get_ticker.return_value = {"last": "2430.0"}
+
+    with patch("api.services.trading_service.get_private_client", return_value=mock_client), \
+         patch("api.services.trading_service.get_public_client", return_value=mock_client):
+        with patch.object(Config, "TRADING_MODE", "live"):
+            res = service.check_realtime_ladder_tp("ETH-USDT-SWAP")
+
+        assert res is not None
+        assert res["tier"] == 1
+        assert res["cap_ratio"] == 0.65
+        assert res["target_held_sz"] == -0.65
+        assert res["order_sz"] == 0.35
+        mock_client.place_order.assert_called_once()
+        args = mock_client.place_order.call_args.kwargs
+        assert args["side"] == "buy"
+        assert args["pos_side"] == "short"
+        assert args["sz"] == "0.35"
+
+
+

@@ -1776,7 +1776,15 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
         setTxt('at-running-bar', s.bar || '-');
         setTxt('at-running-leverage', s.leverage ? `${s.leverage}x` : '-');
         setTxt('at-running-capital', s.capital !== undefined ? `${s.capital} USDT` : '-');
-        setTxt('at-running-ladder', s.ladder_tp !== false ? '已启用 (2.5%/4.5%)' : '未启用');
+        let ladderDesc = '未启用';
+        if (s.ladder_tp !== false) {
+          if (s.ladder_tp_ratchet && s.ladder_tp_ratchet < 1.0) {
+            ladderDesc = `已锁死止盈 (限仓 ${(s.ladder_tp_ratchet * 100).toFixed(0)}%)`;
+          } else {
+            ladderDesc = '5秒实时监听 (+2.5%/+4.5%)';
+          }
+        }
+        setTxt('at-running-ladder', ladderDesc);
 
         // 左侧交易配置卡片策略运行提示
         const hint = document.getElementById('tr-strategy-running-hint');
@@ -1861,6 +1869,10 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
         const nextIn = s.next_execute_in ? `${s.next_execute_in}秒后执行` : '-';
         const lastTime = s.last_execute_time ? new Date(s.last_execute_time * 1000).toLocaleTimeString('zh-CN') : '-';
         let lastInfo = `上次: ${lastTime} | 下次: ${nextIn}`;
+        if (s.last_ladder_tp) {
+          const ltpTime = new Date(s.last_ladder_tp.time * 1000).toLocaleTimeString('zh-CN');
+          lastInfo += ` | <span class="text-success">阶梯T${s.last_ladder_tp.tier}止盈已触发(${ltpTime}, 减仓至${(s.last_ladder_tp.cap_ratio * 100).toFixed(0)}%)</span>`;
+        }
         if (s.last_error) lastInfo += ` | <span class="text-danger">错误: ${s.last_error}</span>`;
         if (elLast) elLast.innerHTML = lastInfo;
       } else {

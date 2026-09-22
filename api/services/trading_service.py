@@ -17,11 +17,14 @@ import time
 import pathlib
 import threading
 import os
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
 import torch
 import numpy as np
+
+logger = logging.getLogger("trading_service")
 
 from config import Config
 from model.vocab import FORMULA_VOCAB
@@ -85,6 +88,8 @@ class TradingService:
         self._cooldown_seconds: int = int(os.getenv("TRADE_COOLDOWN_SECONDS", "180"))
         # 阶梯主动止盈单向棘轮跟踪：inst_id -> 最高生效的仓位上限比例 (0.65 或 0.30)
         self._ladder_tp_ratchet: dict[str, float] = {}
+        # 阶梯主动止盈基准持仓跟踪：inst_id -> 触发止盈前的基准总持仓张数
+        self._ladder_tp_base_sz: dict[str, float] = {}
 
     # ── 状态查询 ──────────────────────────────────────────────────────────
 
@@ -618,10 +623,14 @@ class TradingService:
             "adjusted_target_sz": round(target_held_sz, 6),
         }
 
-        # 仓位归零或反向时，重置单向棘轮
+        # 仓位归零或反向时，重置单向棘轮与基准持仓
         if abs(net_current_sz) == 0 or (target_held_sz * net_current_sz < 0):
             with self._lock:
                 self._ladder_tp_ratchet.pop(inst_id, None)
+                self._ladder_tp_base_sz.pop(inst_id, None)
+        elif target_held_sz != 0 and self._ladder_tp_ratchet.get(inst_id, 1.0) == 1.0:
+            with self._lock:
+                self._ladder_tp_base_sz[inst_id] = max(abs(net_current_sz), abs(target_held_sz))
 
         if use_ladder_tp and net_current_sz != 0 and (target_held_sz * net_current_sz > 0):
             # 已有持仓且信号同向（顺势持仓中）：检测纯标的价差浮盈
@@ -660,8 +669,9 @@ class TradingService:
                     ladder_tp_diag["tier"] = 2 if effective_cap <= Config.LADDER_TP_TIER2_CAP else 1
                     ladder_tp_diag["cap_ratio"] = effective_cap
 
-                    # 目标张数压缩：不得高于 raw_target_sz * effective_cap
-                    max_allowed_sz = abs(target_held_sz) * effective_cap
+                    # 目标张数压缩：不得高于 base_sz * effective_cap
+                    base_sz = self._ladder_tp_base_sz.get(inst_id, abs(target_held_sz))
+                    max_allowed_sz = base_sz * effective_cap
                     # 单向棘轮约束：目标张数不得大于当前净持仓（防止价格回调时反向回补追买）
                     capped_abs_sz = min(abs(net_current_sz), max_allowed_sz)
 
@@ -1035,6 +1045,7 @@ class TradingService:
         with self._lock:
             self._position_cache.pop(inst_id, None)
             self._ladder_tp_ratchet.pop(inst_id, None)
+            self._ladder_tp_base_sz.pop(inst_id, None)
 
         self.audit.log({
             "event": "close_position",
@@ -1063,6 +1074,191 @@ class TradingService:
         return self.audit.get_recent(n)
 
     # ── 自动执行调度器 ────────────────────────────────────────────────────
+
+    def check_realtime_ladder_tp(self, inst_id: str) -> Optional[dict]:
+        """盘中实时阶梯主动止盈监听（5秒级独立轮询）。
+
+        解耦策略周期的信号计算（如1H），在持仓期间实时监控标的最新价。
+        当纯价格浮盈达到阶梯阈值时，立即向交易所报单减仓止盈，并通过单向棘轮锁定利润。
+        """
+        if not getattr(Config, "ENABLE_LADDER_TP", True):
+            return None
+
+        trade_client = get_private_client()
+        try:
+            net_current_sz, current_positions = self._get_net_position(trade_client, inst_id)
+        except Exception:
+            return None
+
+        # 仓位为0：重置单向棘轮与基准持仓
+        if abs(net_current_sz) == 0:
+            with self._lock:
+                self._ladder_tp_ratchet.pop(inst_id, None)
+                self._ladder_tp_base_sz.pop(inst_id, None)
+            return None
+
+        # 获取开仓持仓均价
+        entry_px = None
+        active_pos = [p for p in current_positions if float(p.get("pos", 0.0) or p.get("target_sz", 0.0) or 0.0) != 0]
+        if active_pos:
+            p_entry = active_pos[0]
+            entry_px = float(p_entry.get("avg_px") or p_entry.get("entry_price") or p_entry.get("avgPx") or 0.0)
+        if not entry_px or entry_px <= 0:
+            with self._lock:
+                cached = self._position_cache.get(inst_id)
+                if cached:
+                    entry_px = float(cached.get("entry_price") or 0.0)
+
+        if not entry_px or entry_px <= 0:
+            return None
+
+        # 获取标的最新价（优先 WebSocket 实时推送信道，无延迟且不消耗 REST 配额；降级 REST ticker）
+        last_price = 0.0
+        ws_ticker = okx_ws_client.latest_tickers.get(inst_id)
+        if ws_ticker and ws_ticker.get("last", 0.0) > 0:
+            last_price = float(ws_ticker["last"])
+        else:
+            try:
+                ticker = get_public_client().get_ticker(inst_id)
+                last_price = float(ticker.get("last", 0.0) or 0.0)
+            except Exception:
+                pass
+
+        if last_price <= 0:
+            return None
+
+        # 计算纯标的价差浮盈百分比（不受杠杆与保证金放大影响）
+        if net_current_sz > 0:  # 多头
+            pnl_pct = (last_price - entry_px) / entry_px
+        else:  # 空头
+            pnl_pct = (entry_px - last_price) / entry_px
+
+        # 匹配阶梯
+        tier = 0
+        cap_ratio = 1.0
+        if pnl_pct >= Config.LADDER_TP_TIER2_PCT:
+            tier = 2
+            cap_ratio = Config.LADDER_TP_TIER2_CAP
+        elif pnl_pct >= Config.LADDER_TP_TIER1_PCT:
+            tier = 1
+            cap_ratio = Config.LADDER_TP_TIER1_CAP
+
+        if tier == 0:
+            return None
+
+        with self._lock:
+            prev_ratchet = self._ladder_tp_ratchet.get(inst_id, 1.0)
+            if inst_id not in self._ladder_tp_base_sz or self._ladder_tp_base_sz[inst_id] <= 0:
+                self._ladder_tp_base_sz[inst_id] = abs(net_current_sz)
+            base_sz = self._ladder_tp_base_sz[inst_id]
+
+        # 单向棘轮：只允许更严格的止盈档位生效（cap_ratio 必须严格小于 prev_ratchet）
+        if cap_ratio >= prev_ratchet:
+            return None
+
+        # 计算止盈后保留的目标张数
+        max_allowed_sz = base_sz * cap_ratio
+        capped_abs_sz = min(abs(net_current_sz), max_allowed_sz)
+
+        inst_info = self._get_instrument_info(inst_id)
+        lot_sz = float(inst_info.get("lotSz", 1.0)) if inst_info else 1.0
+        min_sz = float(inst_info.get("minSz", 0.0)) if inst_info else 0.0
+
+        from decimal import Decimal, ROUND_DOWN
+        if lot_sz > 0:
+            lot_dec = Decimal(str(lot_sz))
+            capped_dec = Decimal(str(capped_abs_sz))
+            steps = (capped_dec / lot_dec).to_integral_value(rounding=ROUND_DOWN)
+            target_abs = float(steps * lot_dec)
+        else:
+            target_abs = round(capped_abs_sz, 4)
+
+        if target_abs < min_sz:
+            target_abs = 0.0
+
+        target_held_sz = target_abs if net_current_sz > 0 else -target_abs
+        delta_sz = target_held_sz - net_current_sz
+        order_sz = abs(delta_sz)
+
+        # 锁定单向棘轮，避免重复触发
+        with self._lock:
+            self._ladder_tp_ratchet[inst_id] = cap_ratio
+
+        if order_sz < min_sz or order_sz <= 0:
+            return None
+
+        # 减仓方向与 pos_side
+        order_side = "sell" if net_current_sz > 0 else "buy"
+        pos_mode = self._get_pos_mode()
+        order_pos_side = "long" if net_current_sz > 0 else "short"
+        if pos_mode == "net_mode":
+            order_pos_side = "net"
+
+        # 格式化数量
+        if lot_sz >= 1:
+            sz_str = str(int(order_sz))
+        elif lot_sz > 0:
+            lot_precision = len(f"{lot_sz:.10f}".rstrip("0").split(".")[1]) if "." in f"{lot_sz:.10f}".rstrip("0") else 0
+            sz_str = f"{order_sz:.{lot_precision}f}"
+        else:
+            sz_str = str(round(order_sz, 4))
+
+        inst_clean = ''.join(c for c in inst_id if c.isalnum())[:8]
+        cl_ord_id = f"aptp{int(time.time())}{inst_clean}"
+
+        # 下单减仓止盈（减仓不附带硬止损单）
+        try:
+            order_result = trade_client.place_order(
+                inst_id=inst_id,
+                side=order_side,
+                pos_side=order_pos_side,
+                ord_type="market",
+                sz=sz_str,
+                td_mode="cross",
+                cl_ord_id=cl_ord_id,
+            )
+        except Exception as e:
+            order_result = {"error": str(e), "failed": True}
+
+        with self._lock:
+            if not Config.is_live() and inst_id in self._position_cache:
+                self._position_cache[inst_id]["target_sz"] = round(target_held_sz, 6)
+            self._last_order_time[inst_id] = time.time()
+            if self._auto_trade_state.get("running"):
+                self._auto_trade_state["total_orders"] = self._auto_trade_state.get("total_orders", 0) + 1
+                self._auto_trade_state["last_ladder_tp"] = {
+                    "time": time.time(),
+                    "tier": tier,
+                    "cap_ratio": cap_ratio,
+                    "pnl_pct": round(pnl_pct, 6),
+                    "target_sz": round(target_held_sz, 6),
+                    "order_sz": round(order_sz, 6),
+                }
+
+        audit_data = {
+            "event": "realtime_ladder_tp_trigger",
+            "inst_id": inst_id,
+            "tier": tier,
+            "cap_ratio": cap_ratio,
+            "pnl_pct": round(pnl_pct, 6),
+            "entry_px": entry_px,
+            "last_price": last_price,
+            "base_sz": base_sz,
+            "net_current_sz": round(net_current_sz, 6),
+            "target_held_sz": round(target_held_sz, 6),
+            "order_sz": round(order_sz, 6),
+            "order": order_result,
+        }
+        self.audit.log(audit_data)
+
+        # 触发 Reef Observe 对齐
+        try:
+            from evolution.observer import get_observer
+            get_observer().sync(client=trade_client, audit_log_path=str(self.audit.log_path))
+        except Exception:
+            pass
+
+        return audit_data
 
     def start_auto_trade(
         self,
@@ -1102,6 +1298,7 @@ class TradingService:
                 "max_position_pct": max_position_pct,
                 "interval_seconds": interval_seconds,
                 "ladder_tp": ladder_tp,
+                "last_ladder_tp": None,
                 "last_execute_time": None,
                 "next_execute_time": time.time() + 2,  # 2 秒后首次执行
                 "total_executions": 0,
@@ -1145,6 +1342,10 @@ class TradingService:
     def get_auto_trade_status(self) -> dict:
         """获取自动交易状态。"""
         state = self._auto_trade_state.copy()
+        inst_id = state.get("inst_id")
+        if inst_id:
+            state["ladder_tp_ratchet"] = self._ladder_tp_ratchet.get(inst_id, 1.0)
+            state["ladder_tp_base_sz"] = self._ladder_tp_base_sz.get(inst_id, 0.0)
         if state.get("strategy_path"):
             state["strategy_name"] = pathlib.Path(state["strategy_path"]).name
         if state.get("next_execute_time"):
@@ -1167,6 +1368,16 @@ class TradingService:
             if now < next_time:
                 sleep_sec = min(next_time - now, 5)
                 time.sleep(sleep_sec)
+                # 盘中高频阶梯主动止盈监听（默认5秒一次，解耦长周期策略信号）
+                with self._lock:
+                    ladder_tp_enabled = self._auto_trade_state.get("ladder_tp", True)
+                    curr_inst_id = self._auto_trade_state.get("inst_id")
+                    is_running = self._auto_trade_state.get("running")
+                if is_running and ladder_tp_enabled and curr_inst_id:
+                    try:
+                        self.check_realtime_ladder_tp(curr_inst_id)
+                    except Exception:
+                        pass
                 continue
 
             # 执行信号
