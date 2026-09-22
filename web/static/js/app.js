@@ -1813,14 +1813,33 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
         const sigPriceEl = document.getElementById('at-signal-price');
         const sigSzEl = document.getElementById('at-signal-sz');
         if (sigInd) {
-          let cls = 'signal-flat', txt = '空仓';
-          if (lr.skipped) { cls = 'signal-flat'; txt = '跳过'; }
-          else if (sigVal > 0.05) { cls = 'signal-long'; txt = '做多'; }
-          else if (sigVal < -0.05) { cls = 'signal-short'; txt = '做空'; }
-          sigInd.className = `signal-indicator ${cls}`;
-          sigInd.textContent = txt;
+          if (s.last_error && !s.last_result) {
+            sigInd.className = 'signal-indicator signal-short';
+            sigInd.style.background = 'rgba(239, 68, 68, 0.2)';
+            sigInd.style.color = '#ef4444';
+            sigInd.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+            sigInd.textContent = '异常';
+          } else {
+            sigInd.style.background = '';
+            sigInd.style.color = '';
+            sigInd.style.borderColor = '';
+            let cls = 'signal-flat', txt = '空仓';
+            if (lr.skipped) { cls = 'signal-flat'; txt = '跳过'; }
+            else if (sigVal > 0.05) { cls = 'signal-long'; txt = '做多'; }
+            else if (sigVal < -0.05) { cls = 'signal-short'; txt = '做空'; }
+            sigInd.className = `signal-indicator ${cls}`;
+            sigInd.textContent = txt;
+          }
         }
-        if (sigValEl) sigValEl.textContent = sigVal !== null ? sigVal : '-';
+        if (sigValEl) {
+          if (s.last_error && !s.last_result) {
+            sigValEl.innerHTML = `<span class="text-danger" style="font-size:12px;cursor:pointer" title="${s.last_error.replace(/"/g, '&quot;')}">执行出错 (点击查看)</span>`;
+            sigValEl.onclick = () => alert('自动交易异常:\n\n' + s.last_error);
+          } else {
+            sigValEl.onclick = null;
+            sigValEl.textContent = sigVal !== null ? sigVal : '-';
+          }
+        }
         if (sigPriceEl) sigPriceEl.textContent = lr.price || '-';
         if (sigSzEl) sigSzEl.textContent = lr.target_sz !== undefined && lr.target_sz !== null ? lr.target_sz : '-';
 
@@ -1870,6 +1889,7 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
         const elLast = document.getElementById('at-last-info');
         const nextIn = s.next_execute_in ? `${s.next_execute_in}秒后执行` : '-';
         const lastTime = s.last_execute_time ? new Date(s.last_execute_time * 1000).toLocaleTimeString('zh-CN') : '-';
+        let lastInfo = `上次: ${lastTime} | 下次: ${nextIn}`;
         if (s.last_exit) {
           const leTime = new Date(s.last_exit.time * 1000).toLocaleTimeString('zh-CN');
           if (s.last_exit.type === 'trailing_sl') {
@@ -1881,7 +1901,9 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
           const ltpTime = new Date(s.last_ladder_tp.time * 1000).toLocaleTimeString('zh-CN');
           lastInfo += ` | <span class="text-success">阶梯T${s.last_ladder_tp.tier}止盈已触发(${ltpTime}, 减仓至${(s.last_ladder_tp.cap_ratio * 100).toFixed(0)}%)</span>`;
         }
-        if (s.last_error) lastInfo += ` | <span class="text-danger">错误: ${s.last_error}</span>`;
+        if (s.last_error) {
+          lastInfo += ` | <span class="text-danger" style="font-weight:600" title="${s.last_error.replace(/"/g, '&quot;')}">错误: ${s.last_error}</span>`;
+        }
         if (elLast) elLast.innerHTML = lastInfo;
       } else {
         badge.textContent = '未运行';
@@ -1895,7 +1917,9 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
         const hint = document.getElementById('tr-strategy-running-hint');
         if (hint) hint.style.display = 'none';
       }
-    } catch (e) { /* silent */ }
+    } catch (e) {
+      console.error('refreshAutoTradeStatus error:', e);
+    }
   },
 
   async closePosition() {

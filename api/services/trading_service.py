@@ -1560,12 +1560,18 @@ class TradingService:
                     self._auto_trade_state["last_result"] = hist_entry
                     self._auto_trade_state["last_error"] = None
             except Exception as e:
+                retry_wait = min(interval, 15)
                 with self._lock:
                     self._auto_trade_state["last_execute_time"] = time.time()
-                    self._auto_trade_state["next_execute_time"] = time.time() + interval
+                    self._auto_trade_state["next_execute_time"] = time.time() + retry_wait
                     self._auto_trade_state["total_executions"] += 1
                     self._auto_trade_state["signal_stats"]["error"] += 1
                     self._auto_trade_state["last_error"] = str(e)
+                self.audit.log({
+                    "event": "auto_trade_error",
+                    "error": str(e),
+                    "retry_in": retry_wait,
+                })
 
 
 # 全局单例

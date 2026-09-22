@@ -23,6 +23,20 @@ from config import Config
 BROKER_TAG = "c314b0aecb5bBCDE"
 
 
+OKX_ERROR_TRANSLATIONS: dict[str, str] = {
+    "50123": "该 API Key 没有此币种的交易权限。请登录 OKX 网页或 App -> 个人中心 -> API 管理 -> 编辑该 API Key -> 在「交易币种/品种」中勾选「全部」（或添加对应币种如 BTC, ETH, USDT 等）并保存。",
+    "50113": "API 请求时间戳已过期，或本机系统时间与互联网时间不同步（偏差超过 30 秒）。请检查并校准服务器系统时间（NTP 同步）。",
+    "50111": "当前 IP 不在 API Key 的 IP 白名单范围内。请在 OKX API 管理中将当前服务器 IP 加入白名单，或清空 IP 限制。",
+    "50102": "API 凭据验证失败：Passphrase（密码）或 SecretKey 不正确，请仔细核对配置。",
+    "50100": "请求参数错误或缺失，请核对交易对、仓位方向或模式配置。",
+    "50004": "OKX API 请求频率超限 (Rate limit)，正在冷却中。",
+    "51000": "账户可用保证金或余额不足，无法执行下单/开仓。",
+    "51001": "下单数量不在允许的步进 (lotSz) 或最小委托限制内。",
+    "51008": "当前订单正在处理中或仓位被冻结，请稍后再试。",
+    "51121": "开仓杠杆倍数超过当前模式或品种允许的最大限制。",
+}
+
+
 def _safe_float(val, default: float = 0.0) -> float:
     """安全转换为 float，处理 OKX API 返回的空字符串 ''。"""
     if val is None or val == "":
@@ -55,6 +69,32 @@ class OKXClient:
         self._session.headers.update({
             "Content-Type": "application/json",
         })
+
+    # ── 统一响应解析与错误诊断 ────────────────────────────────────────────
+
+    def _parse_response(self, resp: requests.Response, action_name: str = "OKX API") -> dict:
+        """统一解析 OKX 响应并提供人性化中文错误诊断。
+
+        即使 OKX 返回 HTTP 4xx/5xx，其响应体中通常也包含具体的业务错误码（如 50123）。
+        优先提取业务错误并给出解决方案，避免 HTTPError: 401/400 掩盖真实原因。
+        """
+        try:
+            data = resp.json()
+        except Exception:
+            resp.raise_for_status()
+            raise RuntimeError(f"{action_name} 返回非 JSON 格式响应 (HTTP {resp.status_code}): {resp.text[:200]}")
+
+        code = str(data.get("code", "0"))
+        if code != "0":
+            msg = data.get("msg", "")
+            tip = OKX_ERROR_TRANSLATIONS.get(code, "")
+            err_msg = f"{action_name} 失败 [{code}]: {msg}"
+            if tip:
+                err_msg += f" (诊断建议: {tip})"
+            raise RuntimeError(err_msg)
+
+        resp.raise_for_status()
+        return data
 
     # ── 认证 ──────────────────────────────────────────────────────────────
 
@@ -91,10 +131,7 @@ class OKXClient:
         path = f"/api/v5/public/instruments?instType={inst_type}"
         url = self.base_url + path
         resp = self._session.get(url, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "0":
-            raise RuntimeError(f"OKX API error: {data.get('msg', data)}")
+        data = self._parse_response(resp, "OKX 获取品种列表")
         return data.get("data", [])
 
     def get_instrument(self, inst_id: str, inst_type: str = "SWAP") -> dict:
@@ -118,10 +155,7 @@ class OKXClient:
         path = f"/api/v5/public/instruments?instType={inst_type}&instId={inst_id}"
         url = self.base_url + path
         resp = self._session.get(url, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "0":
-            raise RuntimeError(f"OKX API error: {data.get('msg', data)}")
+        data = self._parse_response(resp, f"OKX 获取合约信息 ({inst_id})")
         items = data.get("data", [])
         return items[0] if items else {}
 
@@ -153,10 +187,7 @@ class OKXClient:
         path = f"/api/v5/market/candles?{params}"
         url = self.base_url + path
         resp = self._session.get(url, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "0":
-            raise RuntimeError(f"OKX API error: {data.get('msg', data)}")
+        data = self._parse_response(resp, f"OKX 获取K线 ({inst_id})")
         return data.get("data", [])
 
     def get_candles_history(
@@ -173,10 +204,7 @@ class OKXClient:
         path = f"/api/v5/market/history-candles?{params}"
         url = self.base_url + path
         resp = self._session.get(url, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "0":
-            raise RuntimeError(f"OKX API error: {data.get('msg', data)}")
+        data = self._parse_response(resp, f"OKX 获取历史K线 ({inst_id})")
         return data.get("data", [])
 
     def get_recent_candles(
@@ -229,10 +257,7 @@ class OKXClient:
         path = f"/api/v5/market/ticker?instId={inst_id}"
         url = self.base_url + path
         resp = self._session.get(url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "0":
-            raise RuntimeError(f"OKX API error: {data.get('msg', data)}")
+        data = self._parse_response(resp, f"OKX 获取行情 ({inst_id})")
         items = data.get("data", [])
         return items[0] if items else {}
 
@@ -292,10 +317,7 @@ class OKXClient:
         headers = self._auth_headers("GET", path, body)
         url = self.base_url + path
         resp = self._session.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "0":
-            raise RuntimeError(f"OKX API error: {data.get('msg', data)}")
+        data = self._parse_response(resp, "OKX 获取账户余额")
         items = data.get("data", [])
         return items[0] if items else {}
 
@@ -386,10 +408,7 @@ class OKXClient:
         headers = self._auth_headers("GET", path, "")
         url = self.base_url + path
         resp = self._session.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "0":
-            raise RuntimeError(f"OKX API error: {data.get('msg', data)}")
+        data = self._parse_response(resp, "OKX 获取持仓")
         return data.get("data", [])
 
     def get_positions_detail(self, inst_id: Optional[str] = None) -> list[dict]:
@@ -480,10 +499,7 @@ class OKXClient:
         headers = self._auth_headers("GET", path, "")
         url = self.base_url + path
         resp = self._session.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "0":
-            raise RuntimeError(f"OKX API error: {data.get('msg', data)}")
+        data = self._parse_response(resp, "OKX 获取历史持仓")
         return data.get("data", [])
 
     def get_bills(
@@ -530,10 +546,7 @@ class OKXClient:
         headers = self._auth_headers("GET", path, "")
         url = self.base_url + path
         resp = self._session.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "0":
-            raise RuntimeError(f"OKX API error: {data.get('msg', data)}")
+        data = self._parse_response(resp, "OKX 获取账单流水")
         return data.get("data", [])
 
     def place_order(
@@ -604,28 +617,16 @@ class OKXClient:
         headers = self._auth_headers("POST", path, body)
         url = self.base_url + path
         resp = self._session.post(url, headers=headers, data=body, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "0":
-            # OKX 返回两层错误：顶层 msg + data[0].sMsg（具体原因）
-            top_msg = data.get("msg", "")
-            detail_msgs = []
-            for d in data.get("data", []):
-                s_code = d.get("sCode", "")
-                s_msg = d.get("sMsg", "")
-                if s_code and s_code != "0":
-                    detail_msgs.append(f"[{s_code}] {s_msg}")
-            detail_str = "; ".join(detail_msgs) if detail_msgs else ""
-            raise RuntimeError(
-                f"OKX order error: {top_msg}"
-                + (f" — {detail_str}" if detail_str else "")
-                + f" | instId={inst_id} sz={sz} side={side} tdMode={td_mode} posSide={pos_side}"
-            )
+        data = self._parse_response(resp, f"OKX 下单 ({inst_id} {side})")
         result = data.get("data", [{}])[0]
         # 检查单笔订单是否成功（sCode != "0" 表示该笔失败）
-        if result.get("sCode") and result.get("sCode") != "0":
+        s_code = str(result.get("sCode", "0"))
+        if s_code and s_code != "0":
+            s_msg = result.get("sMsg", "")
+            tip = OKX_ERROR_TRANSLATIONS.get(s_code, "")
+            tip_str = f" (诊断建议: {tip})" if tip else ""
             raise RuntimeError(
-                f"OKX order rejected: [{result.get('sCode')}] {result.get('sMsg')}"
+                f"OKX 下单被拒绝 [{s_code}]: {s_msg}{tip_str}"
                 + f" | instId={inst_id} sz={sz} side={side} tdMode={td_mode} posSide={pos_side}"
             )
         result["broker_tag"] = broker_tag
@@ -659,11 +660,14 @@ class OKXClient:
         headers = self._auth_headers("POST", path, body)
         url = self.base_url + path
         resp = self._session.post(url, headers=headers, data=body, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "0":
-            raise RuntimeError(f"OKX close error: {data.get('msg', data)}")
+        data = self._parse_response(resp, f"OKX 平仓 ({inst_id})")
         result = data.get("data", [{}])[0]
+        s_code = str(result.get("sCode", "0"))
+        if s_code and s_code != "0":
+            s_msg = result.get("sMsg", "")
+            tip = OKX_ERROR_TRANSLATIONS.get(s_code, "")
+            tip_str = f" (诊断建议: {tip})" if tip else ""
+            raise RuntimeError(f"OKX 平仓被拒绝 [{s_code}]: {s_msg}{tip_str} | instId={inst_id}")
         result["broker_tag"] = broker_tag
         return result
 
@@ -681,10 +685,7 @@ class OKXClient:
         headers = self._auth_headers("GET", path, "")
         url = self.base_url + path
         resp = self._session.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "0":
-            raise RuntimeError(f"OKX account config error: {data.get('msg', data)}")
+        data = self._parse_response(resp, "OKX 获取账户配置")
         items = data.get("data", [])
         return items[0] if items else {}
 
@@ -700,8 +701,7 @@ class OKXClient:
         headers = self._auth_headers("POST", path, body)
         url = self.base_url + path
         resp = self._session.post(url, headers=headers, data=body, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._parse_response(resp, f"OKX 设置杠杆 ({inst_id} {lever}x)")
         return data
 
     def cancel_algo_orders(self, inst_id: str, algo_ids: Optional[list[str]] = None) -> list[dict]:
