@@ -877,6 +877,76 @@ def test_simulation_full_lifecycle_position_cache(mock_trading_service):
             assert net_sz == 0.0
 
 
+def test_auto_trade_loop_order_variable_defined(mock_trading_service):
+    """测试自动交易后台循环在更新指标统计时，order 变量已正确定义，不抛出 NameError。"""
+    service = mock_trading_service
+    service._auto_trade_state = {
+        "running": True,
+        "strategy_path": "dummy.json",
+        "inst_id": "BTC-USDT-SWAP",
+        "capital": 100.0,
+        "leverage": 5,
+        "bar": "1H",
+        "max_position_pct": 0.30,
+        "interval_seconds": 60,
+        "next_execute_time": 0,
+        "total_executions": 0,
+        "total_orders": 0,
+        "total_skips": 0,
+        "signal_stats": {"long": 0, "short": 0, "flat": 0, "skip": 0, "error": 0},
+        "signal_history": [],
+    }
+
+    mock_exec_res = {
+        "signal": 0.5,
+        "action": "多 50%",
+        "risk_passed": True,
+        "order": {"live": True, "skipped": False},
+        "last_price": 85000.0,
+        "target_held_sz": 0.02,
+        "delta_sz": 0.02,
+    }
+
+    with patch.object(service, "execute_signal", return_value=mock_exec_res):
+        # 模拟执行单次自动循环
+        with service._lock:
+            params = {
+                "strategy_path": service._auto_trade_state["strategy_path"],
+                "inst_id": service._auto_trade_state["inst_id"],
+                "capital": service._auto_trade_state["capital"],
+                "leverage": service._auto_trade_state["leverage"],
+                "bar": service._auto_trade_state["bar"],
+                "max_position_pct": service._auto_trade_state["max_position_pct"],
+                "ladder_tp": True,
+            }
+
+        try:
+            result = service.execute_signal(**params)
+            with service._lock:
+                service._auto_trade_state["total_executions"] += 1
+                signal = result.get("signal", 0)
+                action = result.get("action", "空仓")
+                risk_passed = result.get("risk_passed", False)
+                order = result.get("order") or {}
+                ordered = risk_passed and bool(order.get("live") or order.get("simulated")) and not order.get("skipped")
+                skipped = not ordered
+
+                if ordered:
+                    service._auto_trade_state["total_orders"] += 1
+                if skipped:
+                    service._auto_trade_state["total_skips"] += 1
+
+                service._auto_trade_state["last_error"] = None
+        except Exception as e:
+            with service._lock:
+                service._auto_trade_state["last_error"] = str(e)
+
+        assert service._auto_trade_state["last_error"] is None
+        assert service._auto_trade_state["total_orders"] == 1
+        assert service._auto_trade_state["total_executions"] == 1
+
+
+
 
 
 

@@ -217,8 +217,11 @@ class TradingService:
             summary = get_private_client().get_account_summary()
             if isinstance(summary, dict):
                 raw_eq = summary.get("total_eq")
-                if raw_eq is not None and not isinstance(raw_eq, MagicMock if "MagicMock" in globals() else type(None)):
-                    current_eq = float(raw_eq)
+                if raw_eq is not None:
+                    try:
+                        current_eq = float(raw_eq)
+                    except (ValueError, TypeError):
+                        current_eq = None
         except Exception:
             current_eq = None
 
@@ -1106,9 +1109,6 @@ class TradingService:
             "is_live": Config.is_live(),
         }
 
-    def get_audit_log(self, n: int = 50) -> list[dict]:
-        """获取审计日志。"""
-        return self.audit.get_recent(n)
 
     # ── 自动执行调度器 ────────────────────────────────────────────────────
 
@@ -1552,6 +1552,7 @@ class TradingService:
                     signal = result.get("signal", 0)
                     action = result.get("action", "空仓")
                     risk_passed = result.get("risk_passed", False)
+                    order = result.get("order") or {}
                     ordered = risk_passed and bool(order.get("live") or order.get("simulated")) and not order.get("skipped")
                     skipped = not ordered
 
