@@ -663,5 +663,45 @@ def test_trailing_stop_loss_runner_super_trend(mock_trading_service):
         mock_client.close_position.assert_called_once_with("ETH-USDT-SWAP", pos_side="long")
 
 
+def test_delta_incremental_position_increase_margin_check(mock_trading_service):
+    """测试同向加仓场景下，保证金充足性检查不会因 ct_val 未定义而抛出异常。"""
+    service = mock_trading_service
+
+    # 当前已有多仓 0.1 张，目标多仓 0.35 张 (target_held_sz=0.35, net_current_sz=0.1, delta=+0.25)
+    mock_client = MagicMock()
+    mock_client.get_positions_detail.return_value = [
+        {"inst_id": "ETH-USDT-SWAP", "pos_side": "long", "pos": 0.10}
+    ]
+    mock_client.get_account_summary.return_value = {"total_eq": 100.0, "avail_bal": 80.0}
+    mock_client.place_order.return_value = {"clOrdId": "ap123", "tag": "c314b0aecb5bBCDE", "live": True}
+
+    with patch("api.services.trading_service.get_private_client", return_value=mock_client), \
+         patch("api.services.trading_service.get_public_client", return_value=mock_client), \
+         patch("api.services.trading_service.load_strategy", return_value={"formula": [0, 69], "formula_decoded": "RET -> POS", "best_score": 2.5}), \
+         patch("api.services.trading_service.eval_strategy_factor", return_value=torch.zeros(1, 800)), \
+         patch("api.services.trading_service.compute_target_positions_stateless", return_value=torch.tensor([[0.5833]])):
+
+        candles = [[str(1600000000000 + i * 900000), "2500", "2510", "2490", "2500", "100", "", "", "1"] for i in range(800)]
+        mock_client.get_recent_candles.return_value = candles
+
+        with patch.object(Config, "TRADING_MODE", "live"):
+            res = service.execute_signal(
+                strategy_path="dummy.json",
+                inst_id="ETH-USDT-SWAP",
+                capital=100.0,
+                leverage=5,
+                bar="15m",
+                max_position_pct=0.30,
+            )
+
+            # 验证加仓执行成功，保证金检查通过，未抛出 NameError: 'ct_val'
+            assert res["risk_passed"] is True
+            assert res["side"] == "buy"
+            assert res["delta_sz"] == 0.24
+            assert res["order"]["clOrdId"] == "ap123"
+            mock_client.place_order.assert_called_once()
+
+
+
 
 

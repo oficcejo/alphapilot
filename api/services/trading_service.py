@@ -600,6 +600,7 @@ class TradingService:
 
         lot_sz = float(inst_info.get("lotSz", 1.0)) if inst_info else 1.0
         min_sz = float(inst_info.get("minSz", 0.0)) if inst_info else 0.0
+        ct_val = float(inst_info.get("ctVal", 1.0)) if inst_info else float(size_detail.get("ct_val", 1.0))
         step_sz = max(lot_sz, min_sz, 1e-6)
 
         # 计算目标净持仓（多为正，空为负，平仓/低于最小量为0）
