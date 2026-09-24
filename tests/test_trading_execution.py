@@ -702,6 +702,182 @@ def test_delta_incremental_position_increase_margin_check(mock_trading_service):
             mock_client.place_order.assert_called_once()
 
 
+def test_short_incremental_add_and_reduction(mock_trading_service):
+    """测试空头完整链路：开空 -> 加空 (卖出开空并带止损) -> 减空 (买入平空且不带止损)。"""
+    service = mock_trading_service
+
+    # 1. 测试空头加仓：当前已有空仓 -0.1 张，目标空仓 -0.34 张 (delta = -0.24)
+    mock_client = MagicMock()
+    mock_client.get_positions_detail.return_value = [
+        {"inst_id": "ETH-USDT-SWAP", "pos_side": "short", "pos": 0.10}
+    ]
+    mock_client.get_account_summary.return_value = {"total_eq": 100.0, "avail_bal": 80.0}
+    mock_client.place_order.return_value = {"clOrdId": "ap_add_short", "tag": "c314b0aecb5bBCDE", "live": True}
+
+    candles = [[str(1600000000000 + i * 900000), "2500", "2510", "2490", "2500", "100", "", "", "1"] for i in range(800)]
+    mock_client.get_recent_candles.return_value = candles
+
+    with patch("api.services.trading_service.get_private_client", return_value=mock_client), \
+         patch("api.services.trading_service.get_public_client", return_value=mock_client), \
+         patch("api.services.trading_service.load_strategy", return_value={"formula": [0, 69], "formula_decoded": "RET -> NEG", "best_score": 2.5}), \
+         patch("api.services.trading_service.eval_strategy_factor", return_value=torch.zeros(1, 800)), \
+         patch("api.services.trading_service.compute_target_positions_stateless", return_value=torch.tensor([[-0.5833]])):
+
+        with patch.object(Config, "TRADING_MODE", "live"):
+            res_add = service.execute_signal(
+                strategy_path="dummy.json",
+                inst_id="ETH-USDT-SWAP",
+                capital=100.0,
+                leverage=5,
+                bar="15m",
+                max_position_pct=0.30,
+            )
+            # 加空校验
+            assert res_add["risk_passed"] is True
+            assert res_add["side"] == "sell"
+            assert res_add["delta_sz"] == -0.24
+            call_kwargs = mock_client.place_order.call_args.kwargs
+            assert call_kwargs["side"] == "sell"
+            assert call_kwargs["pos_side"] == "short"
+            # 空头止损价应高于现价 2500 * 1.03 = 2575.00
+            assert float(call_kwargs["sl_trigger_px"]) > 2500.0
+
+    # 2. 测试空头减仓：当前已有空仓 -0.34 张，目标空仓 -0.10 张 (delta = +0.24)
+    mock_client2 = MagicMock()
+    mock_client2.get_positions_detail.return_value = [
+        {"inst_id": "ETH-USDT-SWAP", "pos_side": "short", "pos": 0.34}
+    ]
+    mock_client2.get_account_summary.return_value = {"total_eq": 100.0, "avail_bal": 80.0}
+    mock_client2.place_order.return_value = {"clOrdId": "ap_reduce_short", "tag": "c314b0aecb5bBCDE", "live": True}
+    mock_client2.get_recent_candles.return_value = candles
+
+    with patch("api.services.trading_service.get_private_client", return_value=mock_client2), \
+         patch("api.services.trading_service.get_public_client", return_value=mock_client2), \
+         patch("api.services.trading_service.load_strategy", return_value={"formula": [0, 69], "formula_decoded": "RET -> NEG", "best_score": 2.5}), \
+         patch("api.services.trading_service.eval_strategy_factor", return_value=torch.zeros(1, 800)), \
+         patch("api.services.trading_service.compute_target_positions_stateless", return_value=torch.tensor([[-0.1714]])):
+
+        with patch.object(Config, "TRADING_MODE", "live"):
+            res_red = service.execute_signal(
+                strategy_path="dummy.json",
+                inst_id="ETH-USDT-SWAP",
+                capital=100.0,
+                leverage=5,
+                bar="15m",
+                max_position_pct=0.30,
+            )
+            assert res_red["risk_passed"] is True
+            assert res_red["side"] == "buy"
+            assert res_red["delta_sz"] > 0
+            call_kwargs = mock_client2.place_order.call_args.kwargs
+            assert call_kwargs["side"] == "buy"
+            assert call_kwargs["pos_side"] == "short"
+            # 减仓不附带止损单
+            assert call_kwargs["sl_trigger_px"] is None
+
+
+def test_close_and_reduction_not_blocked_by_cooldown(mock_trading_service):
+    """测试平仓与减仓作为保护性退出，绝对不受交易冷却时间 (cooldown) 阻挡。"""
+    service = mock_trading_service
+    # 模拟 1 秒前刚下过单
+    service._last_order_time["ETH-USDT-SWAP"] = 9999999.0
+    service._cooldown_seconds = 60
+
+    mock_client = MagicMock()
+    mock_client.get_positions_detail.return_value = [
+        {"inst_id": "ETH-USDT-SWAP", "pos_side": "long", "pos": 0.35}
+    ]
+    mock_client.get_account_summary.return_value = {"total_eq": 100.0, "avail_bal": 80.0}
+    mock_client.close_position.return_value = {"code": "0"}
+
+    candles = [[str(1600000000000 + i * 900000), "2500", "2510", "2490", "2500", "100", "", "", "1"] for i in range(800)]
+    mock_client.get_recent_candles.return_value = candles
+
+    with patch("api.services.trading_service.get_private_client", return_value=mock_client), \
+         patch("api.services.trading_service.get_public_client", return_value=mock_client), \
+         patch("api.services.trading_service.load_strategy", return_value={"formula": [0, 69], "formula_decoded": "FLAT", "best_score": 2.5}), \
+         patch("api.services.trading_service.eval_strategy_factor", return_value=torch.zeros(1, 800)), \
+         patch("api.services.trading_service.compute_target_positions_stateless", return_value=torch.tensor([[0.0]])), \
+         patch("time.time", return_value=10000000.0):  # 仅过去 1 秒
+
+        with patch.object(Config, "TRADING_MODE", "live"):
+            res = service.execute_signal(
+                strategy_path="dummy.json",
+                inst_id="ETH-USDT-SWAP",
+                capital=100.0,
+                leverage=5,
+                bar="15m",
+            )
+            # 平仓成功执行，未被冷却时间拦截
+            assert res["risk_passed"] is True
+            assert res["order"]["action"] == "CLOSE"
+            mock_client.close_position.assert_called_once()
+
+
+def test_simulation_full_lifecycle_position_cache(mock_trading_service):
+    """测试模拟盘 (Paper Trading) 模式下，开多、加多、减多、多翻空、加空、减空、平仓全生命周期的持仓缓存一致性。"""
+    service = mock_trading_service
+    service._position_cache.clear()
+
+    # 1. 模拟开多 (signal > 0)
+    mock_client = MagicMock()
+    mock_client.get_account_summary.return_value = {"total_eq": 100.0, "avail_bal": 80.0}
+    candles = [[str(1600000000000 + i * 900000), "2500", "2510", "2490", "2500", "100", "", "", "1"] for i in range(800)]
+    mock_client.get_recent_candles.return_value = candles
+
+    with patch("api.services.trading_service.get_private_client", return_value=mock_client), \
+         patch("api.services.trading_service.get_public_client", return_value=mock_client), \
+         patch("api.services.trading_service.load_strategy", return_value={"formula": [0], "formula_decoded": "TEST", "best_score": 2.5}), \
+         patch("api.services.trading_service.eval_strategy_factor", return_value=torch.zeros(1, 800)), \
+         patch.object(Config, "TRADING_MODE", "simulated"):
+
+        # 1.1 开多 0.34 张
+        service._last_order_time.clear()
+        with patch("api.services.trading_service.compute_target_positions_stateless", return_value=torch.tensor([[0.5833]])):
+            res1 = service.execute_signal("dummy.json", "ETH-USDT-SWAP", 100.0, 5, "15m", 0.30)
+            assert res1["order"]["action"] != "HOLD"
+            net_sz, _ = service._get_net_position(mock_client, "ETH-USDT-SWAP")
+            assert net_sz == 0.34
+
+        # 1.2 减多至 0.10 张 (减仓订单为 sell，但持仓依然为多头 +0.10)
+        service._last_order_time.clear()
+        with patch("api.services.trading_service.compute_target_positions_stateless", return_value=torch.tensor([[0.1714]])):
+            res2 = service.execute_signal("dummy.json", "ETH-USDT-SWAP", 100.0, 5, "15m", 0.30)
+            assert res2["delta_sz"] < 0
+            net_sz, pos_items = service._get_net_position(mock_client, "ETH-USDT-SWAP")
+            assert net_sz == 0.10
+            assert pos_items[0]["pos_side"] == "long"
+            assert pos_items[0]["pos"] == 0.10
+
+        # 1.3 多翻空至 -0.34 张 (触发反转)
+        service._last_order_time.clear()
+        with patch("api.services.trading_service.compute_target_positions_stateless", return_value=torch.tensor([[-0.5833]])):
+            res3 = service.execute_signal("dummy.json", "ETH-USDT-SWAP", 100.0, 5, "15m", 0.30)
+            net_sz, pos_items = service._get_net_position(mock_client, "ETH-USDT-SWAP")
+            assert net_sz == -0.34
+            assert pos_items[0]["pos_side"] == "short"
+            assert pos_items[0]["pos"] == 0.34
+
+        # 1.4 减空至 -0.10 张 (减空订单为 buy，但持仓依然为空头 -0.10)
+        service._last_order_time.clear()
+        with patch("api.services.trading_service.compute_target_positions_stateless", return_value=torch.tensor([[-0.1714]])):
+            res4 = service.execute_signal("dummy.json", "ETH-USDT-SWAP", 100.0, 5, "15m", 0.30)
+            assert res4["delta_sz"] > 0
+            net_sz, pos_items = service._get_net_position(mock_client, "ETH-USDT-SWAP")
+            assert net_sz == -0.10
+            assert pos_items[0]["pos_side"] == "short"
+            assert pos_items[0]["pos"] == 0.10
+
+        # 1.5 平仓归零
+        service._last_order_time.clear()
+        with patch("api.services.trading_service.compute_target_positions_stateless", return_value=torch.tensor([[0.0]])):
+            res5 = service.execute_signal("dummy.json", "ETH-USDT-SWAP", 100.0, 5, "15m", 0.30)
+            assert res5["order"]["action"] == "CLOSE"
+            net_sz, _ = service._get_net_position(mock_client, "ETH-USDT-SWAP")
+            assert net_sz == 0.0
+
+
+
 
 
 

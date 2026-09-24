@@ -606,7 +606,7 @@ class OKXClient:
         # 附带交易所级硬止损（attachAlgoOrds，最新价触发市价止损）
         if sl_trigger_px:
             body_dict["attachAlgoOrds"] = [{
-                "attachAlgoClOrdId": f"sl{int(time.time())}"[:32],
+                "attachAlgoClOrdId": f"sl{int(time.time() * 1000)}"[:32],
                 "slTriggerPx": str(sl_trigger_px),
                 "slOrdPx": "-1",  # -1 表示市价委托平仓
                 "slTriggerPxType": "last",

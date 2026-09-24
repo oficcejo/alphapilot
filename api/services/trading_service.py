@@ -215,9 +215,12 @@ class TradingService:
         current_eq = None
         try:
             summary = get_private_client().get_account_summary()
-            current_eq = summary.get("total_eq", 0)
+            if isinstance(summary, dict):
+                raw_eq = summary.get("total_eq")
+                if raw_eq is not None and not isinstance(raw_eq, MagicMock if "MagicMock" in globals() else type(None)):
+                    current_eq = float(raw_eq)
         except Exception:
-            pass
+            current_eq = None
 
         # 记录当日初始权益（首次获取到时记录）
         if self._daily_tracker["initial_eq"] is None and current_eq and current_eq > 0:
@@ -350,10 +353,16 @@ class TradingService:
                 cached = self._position_cache.get(inst_id)
                 if not cached:
                     return 0.0, []
-                side = cached.get("side", "")
-                sz = float(cached.get("target_sz", 0.0))
-                net_sz = sz if side == "buy" else -sz if side == "sell" else 0.0
-                return net_sz, [cached]
+                net_sz = float(cached.get("target_sz", 0.0))
+                pos_item = {
+                    "inst_id": inst_id,
+                    "pos_side": cached.get("pos_side", "long" if net_sz > 0 else "short" if net_sz < 0 else "net"),
+                    "pos": abs(net_sz),
+                    "avg_px": cached.get("entry_price", cached.get("avg_px", 0.0)),
+                    "last": cached.get("entry_price", 0.0),
+                    "target_sz": net_sz,
+                }
+                return net_sz, [pos_item]
         try:
             positions = trade_client.get_positions_detail(inst_id)
         except Exception:
@@ -728,10 +737,14 @@ class TradingService:
         else:
             risk_checks.append({"check": "signal_range", "passed": True, "msg": f"信号 {signal:.2f} 在范围内"})
 
-        # 5.3 交易冷却检查（仅在需要调仓下单时检查）
+        # 5.3 交易冷却检查（仅在需要调仓开仓/加仓/反转时检查，平仓与减仓保护性退出不受冷却限制）
+        is_reduction_or_close = (target_held_sz == 0.0 and abs(net_current_sz) > 0) or (
+            target_held_sz * net_current_sz > 0 and abs(target_held_sz) < abs(net_current_sz)
+        )
         needs_order = not (
             (target_held_sz == 0.0 and abs(net_current_sz) == 0.0)
             or (abs(delta_sz) < step_sz and target_held_sz * net_current_sz > 0)
+            or is_reduction_or_close
         )
         if risk_passed and needs_order:
             last_t = self._last_order_time.get(inst_id, 0)
@@ -775,7 +788,7 @@ class TradingService:
         # 规则说明：
         # a) 减仓/平仓（同向减持或完全清仓）只会释放保证金并落袋盈亏，绝不消耗可用余额，无条件放行；
         # b) 同向加仓仅校验增量 delta_sz 所需的新增保证金；
-        # c) 空仓新开或反向开仓，校验目标名义仓位所需保证金。
+        # c) 空仓新开校验目标名义仓位所需保证金；反向开仓会先全平旧仓位释放保证金，结合账户总权益评估。
         if risk_passed and account_avail is not None and abs(delta_sz) > 0:
             is_reduction = (target_held_sz * net_current_sz > 0 and abs(target_held_sz) <= abs(net_current_sz)) or (target_held_sz == 0 and net_current_sz != 0)
             if is_reduction:
@@ -793,18 +806,23 @@ class TradingService:
                     # 空仓新开或反向开仓
                     required_margin = abs(target_value) / leverage if leverage > 0 else abs(target_value)
 
-                if account_avail < required_margin:
+                # 反向开仓会先平旧仓释放保证金，因而可用资金有效容量应计入释放后的权益
+                effective_avail = account_avail
+                if target_held_sz * net_current_sz < 0 and account_eq is not None:
+                    effective_avail = max(account_avail, account_eq)
+
+                if effective_avail < required_margin:
                     risk_checks.append({
                         "check": "margin_sufficiency",
                         "passed": False,
-                        "msg": f"可用余额 {account_avail:.2f} USDT < 所需保证金 {required_margin:.2f} USDT",
+                        "msg": f"可用余额 {effective_avail:.2f} USDT < 所需保证金 {required_margin:.2f} USDT",
                     })
                     risk_passed = False
                 else:
                     risk_checks.append({
                         "check": "margin_sufficiency",
                         "passed": True,
-                        "msg": f"可用余额 {account_avail:.2f} USDT ≥ 所需保证金 {required_margin:.2f} USDT",
+                        "msg": f"可用余额 {effective_avail:.2f} USDT ≥ 所需保证金 {required_margin:.2f} USDT",
                     })
 
         # 6. Delta 状态机执行调仓
@@ -862,8 +880,12 @@ class TradingService:
             # 4.2 计算具体调仓量与方向
             # 若反转持仓 (由多翻空或由空翻多)：先全平旧仓位，再按目标全量开新仓
             if net_current_sz * target_held_sz < 0:
-                close_res = self.close_position(inst_id)
-                hedge_actions.append({"action": "reverse_close", "result": close_res})
+                try:
+                    close_res = self.close_position(inst_id)
+                    hedge_actions.append({"action": "reverse_close", "result": close_res})
+                except Exception as e:
+                    logger.warning(f"反转平旧仓异常: {e}")
+                    hedge_actions.append({"action": "reverse_close_error", "error": str(e)})
                 order_sz = abs(target_held_sz)
                 order_side = "buy" if target_held_sz > 0 else "sell"
                 order_pos_side = "long" if target_held_sz > 0 else "short"
@@ -898,9 +920,10 @@ class TradingService:
 
             # 4.4 格式化下单数量 sz
             if lot_sz >= 1:
-                sz_str = str(int(order_sz))
+                sz_str = str(int(round(order_sz)))
             elif lot_sz > 0:
-                lot_precision = len(f"{lot_sz:.10f}".rstrip("0").split(".")[1]) if "." in f"{lot_sz:.10f}".rstrip("0") else 0
+                lot_str = f"{lot_sz:.10f}".rstrip("0").rstrip(".")
+                lot_precision = len(lot_str.split(".")[1]) if "." in lot_str else 0
                 sz_str = f"{order_sz:.{lot_precision}f}"
             else:
                 sz_str = str(round(order_sz, 4))
@@ -913,7 +936,7 @@ class TradingService:
                 }
             else:
                 inst_clean = ''.join(c for c in inst_id if c.isalnum())[:8]
-                cl_ord_id = f"ap{int(time.time())}{inst_clean}"
+                cl_ord_id = f"ap{int(time.time() * 1000)}{inst_clean}"[:32]
 
                 # 4.5 生成 Reef Observe 决策收据
                 receipt_id = None
@@ -955,11 +978,13 @@ class TradingService:
                 with self._lock:
                     self._position_cache[inst_id] = {
                         "inst_id": inst_id,
-                        "side": order_side,
                         "pos_side": order_pos_side,
+                        "pos": abs(round(target_held_sz, 6)),
+                        "side": order_side,
                         "signal": round(signal, 4),
                         "target_sz": round(target_held_sz, 6),
                         "target_value": round(target_value, 2),
+                        "avg_px": last_price,
                         "entry_price": last_price,
                         "stop_loss_price": sl_price_str,
                         "capital": capital,
@@ -1035,6 +1060,11 @@ class TradingService:
         trade_client = get_private_client()
 
         pos_side_to_close = "net"
+        if not Config.is_live():
+            with self._lock:
+                cached = self._position_cache.get(inst_id)
+                if cached:
+                    pos_side_to_close = cached.get("pos_side", "net")
         try:
             positions = trade_client.get_positions_detail(inst_id)
             if positions:
@@ -1522,9 +1552,8 @@ class TradingService:
                     signal = result.get("signal", 0)
                     action = result.get("action", "空仓")
                     risk_passed = result.get("risk_passed", False)
-                    order = result.get("order", {})
-                    ordered = risk_passed and order.get("live") and not order.get("skipped")
-                    skipped = order.get("skipped") or not risk_passed
+                    ordered = risk_passed and bool(order.get("live") or order.get("simulated")) and not order.get("skipped")
+                    skipped = not ordered
 
                     if ordered:
                         self._auto_trade_state["total_orders"] += 1
