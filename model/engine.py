@@ -27,12 +27,13 @@ except ImportError:
         return _torch.sign(_torch.tanh(factors))
 
 try:
-    from config import Config as _RootConfig
+    from config import Config as _RootConfig, resolve_path as _resolve_path
     _STRATEGY_FILE  = _RootConfig.STRATEGY_FILE
     _CHECKPOINT_DIR = pathlib.Path(getattr(_RootConfig, 'CHECKPOINT_DIR', 'checkpoints'))
 except ImportError:
     _STRATEGY_FILE  = "best_mt5_strategy.json"
     _CHECKPOINT_DIR = pathlib.Path("checkpoints")
+    def _resolve_path(p): return pathlib.Path(p)
 
 
 def _strategy_file_for_symbol(symbol: str | None, timeframe: str | None = None) -> str:
@@ -43,17 +44,18 @@ def _strategy_file_for_symbol(symbol: str | None, timeframe: str | None = None) 
     timeframe 为 None 时回退到旧版命名 best_{symbol}.json（向后兼容）。
     """
     if symbol:
+        strat_dir = _resolve_path("strategies")
         if timeframe:
             # 清理 timeframe 中的非法文件名字符
             tf_safe = ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in str(timeframe))
-            return str(pathlib.Path("strategies") / f"best_{symbol}_{tf_safe}.json")
-        return str(pathlib.Path("strategies") / f"best_{symbol}.json")
+            return str(strat_dir / f"best_{symbol}_{tf_safe}.json")
+        return str(strat_dir / f"best_{symbol}.json")
     return _STRATEGY_FILE
 
 
 def _fallback_data_file_for_symbol(symbol: str) -> tuple[str | None, str | None]:
     """Read web_settings.json last_data_file when strategy JSON lacks data_file."""
-    settings_path = pathlib.Path("web_settings.json")
+    settings_path = _resolve_path("web_settings.json")
     if not settings_path.exists():
         return None, None
     try:
@@ -1203,7 +1205,9 @@ class AlphaEngine:
             if self.timeframe:
                 parts.append(self.timeframe)
             sym_tag = f"_{'_'.join(parts)}" if parts else ""
-            hist_path = f"training_history{sym_tag}.json"
+            hist_path = _resolve_path(f"training_history{sym_tag}.json")
+            if hist_path.is_dir():
+                hist_path = hist_path / f"training_history{sym_tag}.json"
             payload = {
                 k: v for k, v in self.training_history.items()
                 if k != "_low_entropy_streak"

@@ -39,9 +39,16 @@ for _d in (DATA_DIR, STRATEGIES_DIR, CHECKPOINT_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 
+def resolve_path(p: os.PathLike | str) -> pathlib.Path:
+    """将相对路径统一解析为基于 BASE_DIR 的绝对路径；若本就是绝对路径则保持不变。"""
+    path = pathlib.Path(p)
+    return path if path.is_absolute() else (BASE_DIR / path)
+
 
 class Config:
     """全局配置——品种、数据路径、风控、OKX 连接、交易模式。"""
+
+    resolve_path = staticmethod(resolve_path)
 
     # ── 路径 ──────────────────────────────────────────────────────────────
     BASE_DIR = str(BASE_DIR)

@@ -14,7 +14,7 @@ WORKDIR /build
 
 # 先复制依赖文件，利用 Docker 层缓存
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --user --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
 
 # ── 运行阶段 ────────────────────────────────────────────────────────
 FROM python:3.11-slim

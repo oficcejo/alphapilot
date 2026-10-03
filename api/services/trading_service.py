@@ -26,7 +26,7 @@ import numpy as np
 
 logger = logging.getLogger("trading_service")
 
-from config import Config
+from config import Config, resolve_path
 from model.vocab import FORMULA_VOCAB
 from model.vm import StackVM
 from model.features import MT5FeatureEngineer
@@ -40,22 +40,33 @@ class AuditLog:
     """交易审计日志——记录每笔决策。"""
 
     def __init__(self, log_path: str = "trading_audit.jsonl"):
-        self.log_path = pathlib.Path(log_path)
+        p = resolve_path(log_path)
+        if p.is_dir():
+            p = p / "trading_audit.jsonl"
+        self.log_path = p
         self._lock = threading.Lock()
+
+    def _get_target_file(self) -> pathlib.Path:
+        p = self.log_path
+        if p.is_dir():
+            return p / "trading_audit.jsonl"
+        return p
 
     def log(self, event: dict):
         event["timestamp"] = datetime.now(timezone.utc).isoformat()
         event["mode"] = Config.TRADING_MODE
         event["broker_tag"] = Config.OKX_BROKER_TAG
         event["is_live"] = Config.is_live()
+        target = self._get_target_file()
         with self._lock:
-            with open(self.log_path, "a", encoding="utf-8") as f:
+            with open(target, "a", encoding="utf-8") as f:
                 f.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
 
     def get_recent(self, n: int = 50) -> list[dict]:
-        if not self.log_path.exists():
+        target = self._get_target_file()
+        if not target.exists() or not target.is_file():
             return []
-        lines = self.log_path.read_text(encoding="utf-8").strip().split("\n")
+        lines = target.read_text(encoding="utf-8").strip().split("\n")
         recent = lines[-n:]
         result = []
         for line in recent:

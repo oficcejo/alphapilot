@@ -9,7 +9,7 @@ import math
 from typing import Optional, List, Dict, Any
 import torch
 
-from config import Config
+from config import Config, resolve_path
 from model.vocab import FORMULA_VOCAB, VOCAB_VERSION
 from model.vm import StackVM
 
@@ -69,9 +69,16 @@ def list_strategies() -> list[dict]:
 
 def load_strategy(path: str) -> dict:
     """加载策略 JSON（支持单策略与组合策略）。"""
-    p = pathlib.Path(path)
+    p = resolve_path(path)
     if not p.exists():
-        raise FileNotFoundError(f"策略文件不存在: {path}")
+        # 兼容仅传入策略文件名的情况（如 best_ETH-USDT-SWAP_1H.json）
+        cand = strategies_dir() / p.name
+        if cand.exists():
+            p = cand
+    if not p.exists():
+        raise FileNotFoundError(
+            f"策略文件不存在: {path} (解析绝对路径: {p}, BASE_DIR={Config.BASE_DIR}, CWD={pathlib.Path.cwd()})"
+        )
     data = json.loads(p.read_text(encoding="utf-8"))
     if not data.get("is_portfolio") and "formula_decoded" not in data:
         data["formula_decoded"] = decode_formula(data.get("formula"))
@@ -250,16 +257,21 @@ def eval_strategy_factor(strategy: dict, vm: StackVM, feat_dict: torch.Tensor) -
 
 def delete_strategy(path: str) -> dict:
     """删除策略 JSON 文件。"""
-    p = pathlib.Path(path).resolve()
+    p = resolve_path(path)
     base = strategies_dir().resolve()
 
+    if not p.is_file():
+        cand = base / p.name
+        if cand.is_file():
+            p = cand
+
     try:
-        p.relative_to(base)
+        p.resolve().relative_to(base)
     except ValueError:
         raise ValueError(f"非法路径：策略文件必须在 {base} 目录内")
 
     if not p.exists():
-        raise FileNotFoundError(f"策略文件不存在: {path}")
+        raise FileNotFoundError(f"策略文件不存在: {path} (解析绝对路径: {p})")
 
     if not p.is_file():
         raise ValueError(f"目标不是文件: {path}")

@@ -17,7 +17,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
 
-from config import Config
+from config import Config, resolve_path
 from data_pipeline.okx_client import OKXClient, get_private_client
 
 
@@ -25,7 +25,7 @@ class ObserveEngine:
     """Reef Observe 对齐引擎。"""
 
     def __init__(self, data_dir: Optional[str] = None):
-        self.data_dir = pathlib.Path(data_dir or "data/evolution")
+        self.data_dir = resolve_path(data_dir or "data/evolution")
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         self.receipts_file = self.data_dir / "receipts.jsonl"

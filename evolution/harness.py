@@ -29,7 +29,7 @@ from typing import Optional, Any, Dict, List, Tuple
 import numpy as np
 import torch
 
-from config import Config
+from config import Config, resolve_path
 
 
 class MarketRegime:
@@ -201,7 +201,7 @@ class AdaptiveHarnessPolicy:
     }
 
     def __init__(self, data_dir: Optional[str] = None):
-        self.data_dir = pathlib.Path(data_dir or "data/evolution")
+        self.data_dir = resolve_path(data_dir or "data/evolution")
         self.active_file = self.data_dir / "active_harness.json"
         self.detector = MarketRegimeDetector()
         self._lock = threading.Lock()
@@ -288,7 +288,7 @@ class HarnessOptimizer:
     """基于历史实盘轨迹 (trajectories.jsonl) 的离线回放与寻优器。"""
 
     def __init__(self, data_dir: Optional[str] = None):
-        self.data_dir = pathlib.Path(data_dir or "data/evolution")
+        self.data_dir = resolve_path(data_dir or "data/evolution")
         self.trajectories_file = self.data_dir / "trajectories.jsonl"
         self.policy = AdaptiveHarnessPolicy(data_dir=str(self.data_dir))
 

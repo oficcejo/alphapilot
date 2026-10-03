@@ -26,7 +26,14 @@ def main():
     parser.add_argument("--reload", action="store_true", help="开发模式热重载")
     args = parser.parse_args()
 
-    from config import Config
+    import os
+    from config import Config, resolve_path
+
+    # 强制将当前进程工作目录切换至项目根目录 (BASE_DIR)
+    try:
+        os.chdir(Config.BASE_DIR)
+    except Exception as e:
+        pass
 
     host = args.host or Config.WEB_HOST
     port = args.port or Config.WEB_PORT
@@ -34,8 +41,15 @@ def main():
     print(f"\n{'='*60}")
     print(f"  OKX AlphaPilot | 量化研究与交易中枢")
     print(f"{'='*60}")
+    print(f"  根目录 (BASE) : {Config.BASE_DIR}")
     print(f"  启动地址: http://{host}:{port}")
     print(f"  交易模式: {Config.TRADING_MODE} ({'实盘' if Config.is_live() else '模拟'})")
+    
+    # 自检文件挂载状态（防止容器环境中宿主缺失文件时被 Docker 误建为目录）
+    for chk_file in ("trading_audit.jsonl", "training_history.json"):
+        chk_p = resolve_path(chk_file)
+        if chk_p.exists() and chk_p.is_dir():
+            print(f"  [提示] {chk_file} 为目录（可能由 Docker 文件挂载自动生成），已启用子路径安全读写兼容模式。")
     print(f"{'='*60}\n")
 
     import uvicorn

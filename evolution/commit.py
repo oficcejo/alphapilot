@@ -25,7 +25,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List
 
-from config import Config
+from config import Config, resolve_path
 from model.vocab import FORMULA_VOCAB
 from api.services.strategy_service import load_strategy
 
@@ -36,11 +36,11 @@ class CommitManager:
     """Reef 原子交付与策略热切换管理器。"""
 
     def __init__(self, data_dir: Optional[str] = None, strategies_dir: Optional[str] = None):
-        self.data_dir = pathlib.Path(data_dir or "data/evolution")
+        self.data_dir = resolve_path(data_dir or "data/evolution")
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.commits_file = self.data_dir / "commits.jsonl"
 
-        self.strategies_dir = pathlib.Path(strategies_dir or "strategies")
+        self.strategies_dir = resolve_path(strategies_dir or Config.STRATEGIES_DIR)
         self.archive_dir = self.strategies_dir / "archive"
         self.archive_dir.mkdir(parents=True, exist_ok=True)
 

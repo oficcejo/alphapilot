@@ -247,21 +247,24 @@ python run.py --reload
 #### 方式 A：docker compose（推荐）
 
 ```bash
-# 1. 配置环境变量
+# 1. 配置环境变量（可选，未配置时默认使用 paper 模拟盘）
 cp .env.example .env
 # 编辑 .env 填写 OKX 凭证（实盘需要）
 
-# 2. 构建并启动
+# 2. 创建审计与历史记录文件（避免宿主机缺失时 Docker 误建为目录）
+touch trading_audit.jsonl training_history.json
+
+# 3. 构建并启动
 docker compose up -d --build
 
-# 3. 查看日志
+# 4. 查看日志
 docker compose logs -f
 
-# 4. 停止
+# 5. 停止
 docker compose down
 ```
 
-访问 **http://localhost:8009**。
+访问 **http://<宿主IP或localhost>:8009**。
 
 #### 方式 B：docker 命令
 
@@ -291,8 +294,8 @@ docker stop alphapilot && docker rm alphapilot
 
 | 项目 | 说明 |
 |------|------|
-| 端口 | 默认 8009，可通过 `.env` 中 `WEB_PORT` 修改 |
-| 数据持久化 | `data/` `strategies/` `checkpoints/` 通过 volume 挂载，容器重建后不丢失 |
+| 端口与网络 | 容器内监听 `0.0.0.0:8009`，可通过 `http://<宿主IP>:8009` 访问，端口可在 `.env` / compose 修改 |
+| 数据持久化 | `data/` `strategies/` `checkpoints/` 等通过 volume 挂载，容器重建后不丢失 |
 | 默认模式 | `paper`（模拟盘），设置 `TRADING_MODE=live` + 凭证后切换实盘 |
 | 资源限制 | 默认 4G 内存 / 2 核 CPU，可在 `docker-compose.yml` 中调整 |
 | 健康检查 | 每 30 秒检查 `/api/system` 接口 |

@@ -28,7 +28,7 @@ from typing import Optional, Any, Dict, List, Tuple
 import numpy as np
 import torch
 
-from config import Config
+from config import Config, resolve_path
 from model.vm import StackVM
 from model.features import MT5FeatureEngineer
 from strategy_manager.signal import compute_target_positions_stateless
@@ -41,7 +41,7 @@ class ShadowEvaluator:
     """Reef 影子评测与交付门禁系统。"""
 
     def __init__(self, data_dir: Optional[str] = None):
-        self.data_dir = pathlib.Path(data_dir or "data/evolution")
+        self.data_dir = resolve_path(data_dir or "data/evolution")
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.pool_file = self.data_dir / "shadow_pool.json"
 
@@ -201,12 +201,35 @@ class ShadowEvaluator:
         """将候选策略注册进影子池并触发 5 重门禁评测。"""
         cid = candidate["candidate_id"]
 
-        # 若未提供 incumbent_strategy，默认加载实盘 1H 策略
+        # 若未提供 incumbent_strategy，尝试加载实盘 1H 策略或默认策略文件
         if incumbent_strategy is None:
             try:
                 incumbent_strategy = load_strategy("strategies/best_ETH-USDT-SWAP_1H.json")
             except Exception:
-                incumbent_strategy = {"formula": [55, 120, 59, 124], "best_score": 5.819}
+                try:
+                    incumbent_strategy = load_strategy(Config.STRATEGY_FILE)
+                except Exception:
+                    incumbent_strategy = None
+
+        if incumbent_strategy is None:
+            err_msg = "未找到有效基准策略（strategies/best_ETH-USDT-SWAP_1H.json 或 STRATEGY_FILE 均不可读），影子评测中止"
+            logger.error(err_msg)
+            gate_report = {
+                "gate_passed": False,
+                "reasons": [err_msg],
+                "evaluated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            entry = {
+                **candidate,
+                "status": "REJECTED",
+                "gate_report": gate_report,
+                "comparison": {},
+                "registered_at": datetime.now(timezone.utc).isoformat(),
+            }
+            with self._lock:
+                self.pool[cid] = entry
+            self._save_pool()
+            return entry
 
         gate_passed = False
         gate_report = {"gate_passed": False, "reasons": ["待评测"]}

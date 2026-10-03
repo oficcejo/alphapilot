@@ -30,7 +30,7 @@ from typing import Optional, Any, Dict, List, Tuple
 import numpy as np
 import torch
 
-from config import Config
+from config import Config, resolve_path
 from model.vocab import FORMULA_VOCAB
 from model.vm import StackVM
 from model.features import MT5FeatureEngineer
@@ -44,7 +44,7 @@ class GrowEngine:
     """Reef Grow 策略进化引擎。"""
 
     def __init__(self, data_dir: Optional[str] = None):
-        self.data_dir = pathlib.Path(data_dir or "data/evolution")
+        self.data_dir = resolve_path(data_dir or "data/evolution")
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.trajectories_file = self.data_dir / "trajectories.jsonl"
 

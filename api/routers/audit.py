@@ -13,7 +13,7 @@ import traceback
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from config import Config
+from config import Config, resolve_path
 from rigorous_backtest_audit import audit_strategy, COST_RATE, SLIPPAGE
 
 router = APIRouter(prefix="/api/audit", tags=["策略审计"])
@@ -34,7 +34,7 @@ class AuditRequest(BaseModel):
 async def run_audit(req: AuditRequest):
     """执行严谨回测审计：全样本 / 前后半段 / 尾段20% / 成本压力。"""
     if req.strategy_path:
-        paths = [req.strategy_path]
+        paths = [str(resolve_path(req.strategy_path))]
     else:
         sdir = pathlib.Path(Config.STRATEGIES_DIR)
         paths = sorted(str(p) for p in sdir.glob("*.json"))
@@ -61,7 +61,7 @@ async def run_audit(req: AuditRequest):
 
     saved_to = None
     try:
-        out = pathlib.Path("rigorous_audit_report.json")
+        out = resolve_path("rigorous_audit_report.json")
         out.write_text(json.dumps(reports, indent=2, ensure_ascii=False), encoding="utf-8")
         saved_to = out.name
     except Exception:

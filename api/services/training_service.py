@@ -13,7 +13,7 @@ from typing import Optional
 import torch
 import numpy as np
 
-from config import Config
+from config import Config, resolve_path
 from model.config import ModelConfig
 from model.engine import AlphaEngine
 from data_pipeline.parquet_manager import load_parquet_to_raw_dict, inspect_parquet_file
@@ -239,8 +239,10 @@ class TrainingService:
             parts.append(timeframe)
         sym_tag = f"_{'_'.join(parts)}" if parts else ""
         hist_path = f"training_history{sym_tag}.json"
-        p = pathlib.Path(hist_path)
-        if not p.exists():
+        p = resolve_path(hist_path)
+        if p.is_dir():
+            p = p / hist_path
+        if not p.exists() or not p.is_file():
             return {"error": "训练历史文件不存在", "path": str(p)}
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
@@ -303,20 +305,23 @@ class TrainingService:
             hist_name = f"training_history_{tag}.json" if tag else "training_history.json"
             # 当不指定 tag 时，删除所有 training_history*.json
             if tag:
-                p = pathlib.Path(hist_name)
-                if p.exists():
+                p = resolve_path(hist_name)
+                if p.is_dir():
+                    p = p / hist_name
+                if p.exists() and p.is_file():
                     try:
                         p.unlink()
                         deleted["histories"].append(p.name)
                     except Exception:
                         pass
             else:
-                for p in pathlib.Path(".").glob("training_history*.json"):
-                    try:
-                        p.unlink()
-                        deleted["histories"].append(p.name)
-                    except Exception:
-                        pass
+                for p in resolve_path(".").glob("training_history*.json"):
+                    if p.is_file():
+                        try:
+                            p.unlink()
+                            deleted["histories"].append(p.name)
+                        except Exception:
+                            pass
 
         # 清空当前任务状态
         with self._lock:
