@@ -44,12 +44,12 @@ class OKXWebSocketClient:
         api_key: str = "",
         api_secret: str = "",
         passphrase: str = "",
-        simulated: bool = True,
+        simulated: Optional[bool] = None,
     ):
         self.api_key = api_key or Config.OKX_API_KEY
         self.api_secret = api_secret or Config.OKX_API_SECRET
         self.passphrase = passphrase or Config.OKX_API_PASSPHRASE
-        self.simulated = simulated if (api_key or Config.OKX_API_KEY) else True
+        self.simulated = Config.OKX_API_SIMULATED if simulated is None else simulated
 
         # 最新缓存数据
         self.latest_tickers: Dict[str, dict] = {}       # inst_id -> ticker dict
