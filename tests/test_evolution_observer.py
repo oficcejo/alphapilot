@@ -103,7 +103,7 @@ def test_observe_sync_and_alignment(temp_evolution_dir):
     mock_client.get_bills.return_value = mock_bills
 
     # 执行同步
-    res = engine.sync(client=mock_client, lookback_days=30)
+    res = engine.sync(client=mock_client, lookback_days=180)
     assert res["status"] == "success"
     assert res["new_aligned_count"] == 2
     assert res["total_trajectories"] == 2

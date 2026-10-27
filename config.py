@@ -27,9 +27,9 @@ else:
 
 # 加载 .env 环境变量（优先从 BASE_DIR 读取）
 if (BASE_DIR / ".env").exists():
-    load_dotenv(BASE_DIR / ".env")
+    load_dotenv(BASE_DIR / ".env", override=True)
 else:
-    load_dotenv()
+    load_dotenv(override=True)
 
 DATA_DIR = BASE_DIR / "data"
 STRATEGIES_DIR = BASE_DIR / "strategies"
