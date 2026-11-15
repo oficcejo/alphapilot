@@ -120,7 +120,7 @@ async def get_harness_info(
         if inst_id:
             try:
                 public_client = get_public_client()
-                candles = public_client.get_recent_candles(inst_id, bar=bar, limit=100)
+                candles = public_client.get_recent_candles(inst_id, bar=bar, total=100)
                 if candles and len(candles) >= 64:
                     close_arr = np.array([float(c[4]) for c in candles], dtype=np.float64)
                     high_arr = np.array([float(c[2]) for c in candles], dtype=np.float64)
