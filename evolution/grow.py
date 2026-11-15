@@ -345,7 +345,7 @@ class GrowEngine:
 
     def start_grow(
         self,
-        strategy_path: str = "strategies/best_ETH-USDT-SWAP_1H.json",
+        strategy_path: str = "strategies/vibe_ETH-USDT-SWAP_1H_wvma_breakout.json",
         inst_id: str = "ETH-USDT-SWAP",
         bar: str = "1H",
         steps: int = 150,

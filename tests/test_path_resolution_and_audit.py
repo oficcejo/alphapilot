@@ -36,13 +36,13 @@ def test_resolve_path():
 def test_load_strategy_relative_path_and_diagnostics():
     """测试在不同工作目录下加载策略，以及缺失策略时的诊断信息。"""
     # 1. 验证真实存在的策略能通过相对路径加载
-    strat = load_strategy("strategies/best_ETH-USDT-SWAP_1H.json")
+    strat = load_strategy("strategies/vibe_ETH-USDT-SWAP_1H_wvma_breakout.json")
     assert strat["symbol"] == "ETH-USDT-SWAP"
     assert "formula" in strat
-    assert len(strat["formula"]) == 8
+    assert isinstance(strat["formula"], list) and len(strat["formula"]) >= 1
 
     # 2. 验证仅传入文件名也能加载
-    strat_by_name = load_strategy("best_ETH-USDT-SWAP_1H.json")
+    strat_by_name = load_strategy("vibe_ETH-USDT-SWAP_1H_wvma_breakout.json")
     assert strat_by_name["symbol"] == "ETH-USDT-SWAP"
 
     # 3. 验证在切换工作目录后依然能正确加载
@@ -51,7 +51,7 @@ def test_load_strategy_relative_path_and_diagnostics():
     try:
         os.chdir(tmp_dir)
         # 在非项目根目录下加载相对路径
-        strat_non_cwd = load_strategy("strategies/best_ETH-USDT-SWAP_1H.json")
+        strat_non_cwd = load_strategy("strategies/vibe_ETH-USDT-SWAP_1H_wvma_breakout.json")
         assert strat_non_cwd["symbol"] == "ETH-USDT-SWAP"
 
         # 4. 测试文件不存在时的诊断信息包含 BASE_DIR 与 CWD

@@ -204,7 +204,7 @@ class ShadowEvaluator:
         # 若未提供 incumbent_strategy，尝试加载实盘 1H 策略或默认策略文件
         if incumbent_strategy is None:
             try:
-                incumbent_strategy = load_strategy("strategies/best_ETH-USDT-SWAP_1H.json")
+                incumbent_strategy = load_strategy("strategies/vibe_ETH-USDT-SWAP_1H_wvma_breakout.json")
             except Exception:
                 try:
                     incumbent_strategy = load_strategy(Config.STRATEGY_FILE)
@@ -212,7 +212,7 @@ class ShadowEvaluator:
                     incumbent_strategy = None
 
         if incumbent_strategy is None:
-            err_msg = "未找到有效基准策略（strategies/best_ETH-USDT-SWAP_1H.json 或 STRATEGY_FILE 均不可读），影子评测中止"
+            err_msg = "未找到有效基准策略（strategies/vibe_ETH-USDT-SWAP_1H_wvma_breakout.json 或 STRATEGY_FILE 均不可读），影子评测中止"
             logger.error(err_msg)
             gate_report = {
                 "gate_passed": False,

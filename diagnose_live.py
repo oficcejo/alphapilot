@@ -169,7 +169,7 @@ def analyze_strategy_signal():
     print('='*60)
 
     # 加载策略
-    with open('strategies/best_ETH-USDT-SWAP.json', 'r') as f:
+    with open('strategies/vibe_ETH-USDT-SWAP_1H_wvma_breakout.json', 'r') as f:
         strategy = json.load(f)
 
     formula = strategy.get('formula', [])
