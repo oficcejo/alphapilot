@@ -2,7 +2,7 @@
 
 > 从历史 K 线中自动挖掘可解释的「特征 + 算子」因子公式，并结合 **Reef 持续自进化闭环**（实盘因果归因、微观体制感知、自适应风控、痛点驱动遗传繁衍与零停机原子交付），覆盖数据下载、离线挖掘、回测验证、实盘交易与在线持续进化的全链路量化平台。
 
-**OKX AlphaPilot** 是一个面向 OKX 交易所的独立量化研究与自进化交易平台。它基于强化学习（REINFORCE）+ Looped Transformer 架构，自动搜索由 65 个因果特征和 66 个算子组成的最优因子公式，结合微观波动率体制感知（Harness）与持续在线进化中枢（Reef），在动态多变的市场中自适应抵御震荡回撤并持续迭代 Alpha 策略。
+**OKX AlphaPilot** 是一个面向 OKX 交易所的独立量化研究与自进化交易平台。它基于强化学习（REINFORCE）+ Looped Transformer 架构，自动搜索由 **81 个因果特征**和 **79 个算子**组成的最优因子公式（含 Vibe-Trading Alpha Zoo 对齐的价量微观结构特征族），结合微观波动率体制感知（Harness）与持续在线进化中枢（Reef），在动态多变的市场中自适应抵御震荡回撤并持续迭代 Alpha 策略。
 
 ---
 
@@ -46,8 +46,9 @@
 ### 因子挖掘引擎
 - **强化学习搜索**：REINFORCE 策略梯度 + Actor-Critic baseline，搜索 8-token 公式序列
 - **Looped Transformer**：GPT 风格模型 + QK-Norm 注意力 + 权重共享输出头
-- **65 个因果特征**：趋势、波动率、反转、成交量、跨资产五类，严格防止未来函数泄露
-- **66 个算子**：时序、截面、幅度变换、逻辑门，经"感染模型"校验防止因子退化为 Beta
+- **81 个因果特征**：趋势、波动率、反转、成交量、跨资产五类基础特征，叠加 **Vibe-Trading Alpha Zoo 特征族**（对齐 Qlib158 / WorldQuant Alpha101 的 16 个价量微观结构特征：WVMA、KLEN/KUP/KLOW/KSFT、KBAR_EFF、CORD、VSUMP、RSQR、ALPHA_006/012/054），严格防止未来函数泄露
+- **79 个算子**：时序、截面、幅度变换、逻辑门，含 Vibe 对齐扩展（SAFE_DIV、SIGNED_POWER_3、TS_CORR_5/20、COVARIANCE_5/20、DECAY_LINEAR_10/20、TS_ARG_MAX/MIN、DELTA_10/20、PRODUCT_10 等），经"感染模型"校验防止因子退化为 Beta
+- **词表版本机制**：词表由有序 token 列表哈希派生 `vocab_version` 并写入每个策略 JSON，词表任何增删都会改变版本号，用于检测策略产物的兼容性
 - **多目标评分**：年化收益 + Sortino + Calmar + IC 稳定性 + 回撤控制 + Beta 中性
 - **熵保护与重启**：自适应噪声 + 多级重启策略，应对策略坍塌
 - **Elite Replay**：精英池记忆 + 衰减重放，加速收敛
@@ -118,7 +119,8 @@ okx-alpha-pilot/
 ├── config.py                       # 全局配置（路径、OKX API、风控、Reef进化参数）
 ├── run.py                          # 启动入口
 ├── .env.example                    # 环境变量模板
-├── requirements.txt                # Python 依赖
+├── requirements.txt                # Python 依赖（torch 默认注释，防误拉 CUDA 包）
+├── install_cpu_env.sh              # 一键安装纯 CPU 依赖（torch CPU 版 + 其余依赖）
 │
 ├── evolution/                      # 🧬 Reef 持续自进化中枢
 │   ├── __init__.py                 #   统一导出接口
@@ -133,8 +135,8 @@ okx-alpha-pilot/
 │   ├── engine.py                   #   AlphaEngine 训练引擎（REINFORCE + 熵保护）
 │   ├── vm.py                       #   StackVM 后缀表达式虚拟机
 │   ├── backtest.py                 #   MT5Backtest 多目标评分
-│   ├── features.py                 #   65 个因果特征工程
-│   ├── ops.py                      #   66 个算子（时序/截面/幅度/逻辑）
+│   ├── features.py                 #   81 个因果特征工程（含 Vibe Alpha Zoo 特征族）
+│   ├── ops.py                      #   79 个算子（时序/截面/幅度/逻辑/Vibe 扩展）
 │   ├── vocab.py                    #   词表自动派生 + 版本哈希
 │   ├── registry.py                 #   声明式注册接口
 │   ├── evaluator.py                #   因子评估器
@@ -200,8 +202,17 @@ okx-alpha-pilot/
 
 ```bash
 cd okx-alpha-pilot
+
+# 方式一：一键安装（推荐）
+# 先从 PyTorch 官方源安装纯 CPU 版 torch（杜绝常规 PyPI 源捆绑下载数 GB 的 CUDA 依赖），再装其余依赖
+bash install_cpu_env.sh
+
+# 方式二：手动两步安装
+pip install "torch>=2.1.0" --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 ```
+
+> ⚠️ `requirements.txt` 中 **torch 默认被注释**：本项目为轻量 CPU 推理架构，部分托管面板（如宝塔）解析依赖清单时会经常规 PyPI 源强制拉取数 GB 的 NVIDIA CUDA/cuDNN 包。请务必先按上述方式单独安装 CPU 版 torch。
 
 ### 2. 配置环境变量
 
@@ -580,7 +591,19 @@ python run.py --reload
 <details>
 <summary><b>Q: 为什么训练强制用 CPU 而不是 GPU？</b></summary>
 
-本项目的张量很小（单品种 × 3500 K线 × 30 特征），单个算子的计算量小于 CUDA kernel 启动开销。实测 CPU 比 GPU 快约 2.3 倍（1.91s/步 vs 4.48s/步）。若后续改为批量并行公式评估，可切回 GPU。
+本项目的张量很小（单品种 × 数千根 K 线 × 81 特征），单个算子的计算量小于 CUDA kernel 启动开销。实测 CPU 比 GPU 快约 2.3 倍（1.91s/步 vs 4.48s/步）。若后续改为批量并行公式评估，可切回 GPU。
+</details>
+
+<details>
+<summary><b>Q: 为什么 requirements.txt 里 torch 被注释掉了？</b></summary>
+
+本项目是轻量 CPU 推理架构，不需要 CUDA。若通过常规 PyPI 源安装 torch，会强制捆绑下载数 GB 的 NVIDIA CUDA/cuDNN 驱动包（托管面板解析依赖清单时尤其容易触发）。因此 torch 默认注释，请先执行 `bash install_cpu_env.sh`（或手动 `pip install "torch>=2.1.0" --index-url https://download.pytorch.org/whl/cpu`），再 `pip install -r requirements.txt`。
+</details>
+
+<details>
+<summary><b>Q: 策略 JSON 里的 vocab_version 是什么？旧策略还能用吗？</b></summary>
+
+`vocab_version` 是由「特征 + 算子」有序词表哈希派生的版本号（如 `v4b7b63d89e9b`），写入每个策略 JSON。**词表一旦增删 token，公式里的数字 token ID 含义就会漂移**——旧词表策略在新代码下不会报错，但会静默错位解码为另一条公式。当前词表为 81 特征 + 79 算子；旧词表（`v9217a2c0d91a`）时代的 `best_*.json` 策略已从仓库移除，跨环境迁移策略 JSON 前请先核对 `vocab_version` 一致。
 </details>
 
 <details>
@@ -608,7 +631,7 @@ python run.py --reload
 
 强烈推荐使用 **15m 周期以上（15m / 30m / 1H）**，并下载 **4000 根 K 线** 进行训练：
 1. **抵御手续费与滑点**：1m/3m/5m 微观高频噪点多，回测扣除 0.05% 手续费后容易大幅回吐；15m 以上周期单笔盈利空间更大，能有效覆盖交易成本。
-2. **特征稳定收敛**：系统的 65 个因果特征依赖滚动 500 周期标准化，4000 根 K 线能保证特征充分预热、样本充分，避免短序列过拟合。
+2. **特征稳定收敛**：系统的 81 个因果特征依赖滚动 500 周期标准化，4000 根 K 线能保证特征充分预热、样本充分，避免短序列过拟合。
 </details>
 
 <details>
