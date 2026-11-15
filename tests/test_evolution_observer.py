@@ -3,6 +3,7 @@ tests/test_evolution_observer.py -- Reef Observe 模块单元测试与断言
 """
 
 import json
+import time
 import pytest
 import shutil
 import tempfile
@@ -66,6 +67,11 @@ def test_observe_sync_and_alignment(temp_evolution_dir):
 
     # 2. Mock OKX 客户端历史平仓与账单
     mock_client = MagicMock()
+    now_ms = int(time.time() * 1000)
+    t1_c = now_ms - 7200000
+    t1_u = now_ms - 5400000
+    t2_c = now_ms - 3600000
+    t2_u = now_ms - 1800000
     mock_pos_history = [
         {
             "posId": "mock_pos_1",
@@ -76,8 +82,8 @@ def test_observe_sync_and_alignment(temp_evolution_dir):
             "pnl": "10.0",
             "pnlRatio": "0.2083",
             "type": "2",
-            "cTime": "1789100000000",
-            "uTime": "1789110000000",
+            "cTime": str(t1_c),
+            "uTime": str(t1_u),
         },
         {
             "posId": "mock_pos_2",
@@ -88,16 +94,16 @@ def test_observe_sync_and_alignment(temp_evolution_dir):
             "pnl": "-5.0",
             "pnlRatio": "-0.10",
             "type": "2",
-            "cTime": "1789120000000",
-            "uTime": "1789130000000",
+            "cTime": str(t2_c),
+            "uTime": str(t2_u),
         }
     ]
     mock_bills = [
-        {"ts": "1789100005000", "type": "2", "fee": "-0.05", "pnl": "0"},
-        {"ts": "1789105000000", "type": "8", "fee": "0", "pnl": "-0.01"},
-        {"ts": "1789110005000", "type": "2", "fee": "-0.05", "pnl": "10.0"},
-        {"ts": "1789120005000", "type": "2", "fee": "-0.04", "pnl": "0"},
-        {"ts": "1789130005000", "type": "2", "fee": "-0.04", "pnl": "-5.0"},
+        {"ts": str(t1_c + 5000), "type": "2", "fee": "-0.05", "pnl": "0"},
+        {"ts": str(t1_c + 15000), "type": "8", "fee": "0", "pnl": "-0.01"},
+        {"ts": str(t1_u), "type": "2", "fee": "-0.05", "pnl": "10.0"},
+        {"ts": str(t2_c + 5000), "type": "2", "fee": "-0.04", "pnl": "0"},
+        {"ts": str(t2_u), "type": "2", "fee": "-0.04", "pnl": "-5.0"},
     ]
     mock_client.get_positions_history.return_value = mock_pos_history
     mock_client.get_bills.return_value = mock_bills

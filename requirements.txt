@@ -1,21 +1,38 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-# ── Core ML ──────────────────────────────────────────────
-torch>=2.1.0
-numpy>=1.24.0
+# ==============================================================================
+# OKX AlphaPilot - 运行依赖清单 (requirements.txt)
+# ==============================================================================
+#
+# ⚠️ 【重要说明 - 关于 PyTorch CPU 版本与显卡 CUDA 依赖】：
+# 在 Linux (尤其是宝塔面板 Python 项目管理器) 环境中，若直接通过常规 PyPI 镜像安装 torch，
+# 会强制捆绑下载数 GB 的 NVIDIA CUDA/cuDNN 驱动包 (体积超 4GB)，导致磁盘与显存暴涨。
+#
+# 本项目为轻量级 CPU 推理架构，不需要显卡 CUDA。
+# 宝塔服务器预装环境 (/www/server/pyporject_evn/versions/3.12.13) 已预装轻量纯 CPU 版 (torch-2.15.0+cpu)。
+# 为防止宝塔面板逐行解析此文件时再次触发常规 PyPI 拉取 CUDA 包，此处将 torch 默认注释。
+#
+# 若在全新独立环境部署，请先通过官方 CPU 源安装 torch，再安装本清单：
+#   pip install torch>=2.1.0 --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
+#
+# torch>=2.1.0
 
-# ── Web Framework ────────────────────────────────────────
+# ── Core ML & 数值计算 ──────────────────────────────────────
+numpy>=1.24.0
+scipy>=1.11.0
+
+# ── Web 服务框架 ─────────────────────────────────────────────
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.9
 
-# ── Data ─────────────────────────────────────────────────
+# ── 数据分析与 OKX 交易管道 ──────────────────────────────────
 pandas>=2.0.0
 pyarrow>=14.0.0
 requests>=2.31.0
 aiohttp>=3.9.0
+python-okx>=0.4.0
 
-# ── Utils ────────────────────────────────────────────────
+# ── 工具与配置 ───────────────────────────────────────────────
 tqdm>=4.66.0
-scipy>=1.11.0
 pyyaml>=6.0
 python-dotenv>=1.0.0

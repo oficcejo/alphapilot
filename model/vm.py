@@ -27,20 +27,25 @@ INFECTED_PROPAGATING_OPS = {
     "TS_RANK_5", "TS_RANK_10", "TS_RANK_20", "ABS",
     "TS_SUM_5", "TS_SUM_10", "TS_SUM_20",
     "TS_MEAN_5", "TS_MEAN_10", "TS_MEAN_20",
-    "TS_MAX_10", "TS_MAX_20",
+    "TS_MAX_5", "TS_MAX_10", "TS_MAX_20",
     "CLIP", "SQRT", "POWER", "SIGNED_LOG",
     "SIGMOID", "TANH_SQUASH", "WINSORIZE",
-    "WMA", "EMA_5", "EMA_20", "DECAY", "DECAY_LINEAR_5",
+    "WMA", "EMA_5", "EMA_20", "DECAY",
+    "DECAY_LINEAR_5", "DECAY_LINEAR_10", "DECAY_LINEAR_20",
+    "SIGNED_POWER_3",
     "TS_DECAY_EXP_5",
 }
 # 恢复算子：能够把恒正值域重新变成有正有负
 SIGN_RESTORE_OPS = {
-    "SUB", "DIV", "NEG", "GATE", "IF_GT",
+    "SUB", "DIV", "SAFE_DIV", "NEG", "GATE", "IF_GT",
     "TS_ZSCORE_10", "TS_ZSCORE_20",
     "CS_NEUTRALIZE", "CS_RANK", "CS_SCALE",
     "TS_STD_5", "TS_STD_10", "TS_STD_20",
-    "TS_CORR_10", "TS_SKEW_10", "TS_QUANTILE_10",
-    "DELTA", "DELTA_5", "MOMENTUM_5", "MOMENTUM_10",
+    "TS_CORR_5", "TS_CORR_10", "TS_CORR_20",
+    "COVARIANCE_5", "COVARIANCE_10", "COVARIANCE_20",
+    "TS_SKEW_10", "TS_QUANTILE_10",
+    "DELTA", "DELTA_5", "DELTA_10", "DELTA_20",
+    "MOMENTUM_5", "MOMENTUM_10",
     "PPO",  # 但 PPO 是特征不是算子
 }
 
@@ -61,9 +66,14 @@ def is_sign_restoring(token_name: str) -> bool:
 
 
 # 位置算子集：输出极值时间索引 [0, 1]，后接极值/排名算子时极易坍塌为常数
-ARG_INDEX_OPS = {"TS_ARG_MIN_5", "TS_ARG_MAX_5"}
+ARG_INDEX_OPS = {
+    "TS_ARG_MIN_5", "TS_ARG_MAX_5",
+    "TS_ARG_MIN_10", "TS_ARG_MAX_10",
+    "TS_ARG_MIN_20", "TS_ARG_MAX_20",
+}
 EXTREME_OPS = {
-    "TS_MAX_10", "TS_MAX_20", "TS_MIN_10", "TS_MIN_20",
+    "TS_MAX_5", "TS_MAX_10", "TS_MAX_20",
+    "TS_MIN_5", "TS_MIN_10", "TS_MIN_20",
     "TS_RANK_5", "TS_RANK_10", "TS_RANK_20",
 }
 

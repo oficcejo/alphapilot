@@ -85,12 +85,11 @@ def _ts_rank(x: torch.Tensor, d: int) -> torch.Tensor:
     return torch.nan_to_num(rank, nan=0.0)
 
 
-def _ts_corr_10(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    """x 与 y 的 10 周期因果滑动 Pearson 相关系数，返回 [N, T]，值域 [-1, 1]。
+def _ts_corr(x: torch.Tensor, y: torch.Tensor, d: int) -> torch.Tensor:
+    """x 与 y 的 d 周期因果滑动 Pearson 相关系数，返回 [N, T]，值域 [-1, 1]。
     当 x 或 y 在窗口内为常数（std < 1e-6）时，该位置输出 0。
     """
-    d = 10
-    wx = _ts_rolling(x, d)                         # [N, T, 10]
+    wx = _ts_rolling(x, d)                         # [N, T, d]
     wy = _ts_rolling(y, d)
     mx = wx.mean(dim=-1, keepdim=True)
     my = wy.mean(dim=-1, keepdim=True)
@@ -102,6 +101,11 @@ def _ts_corr_10(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     corr = cov / (sx * sy + 1e-8)
     corr[mask] = 0.0
     return torch.nan_to_num(corr, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _ts_corr_10(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    """x 与 y 的 10 周期因果滑动 Pearson 相关系数（向后兼容）。"""
+    return _ts_corr(x, y, 10)
 
 
 # ── v3.0 新增算子 helper ─────────────────────────────────────────────
@@ -726,5 +730,76 @@ assert _EXPECTED_T34_NAMES <= _REGISTERED_NAMES_T34, (
 _PREV_COUNT = 44 + len(_CROSS_SECTIONAL_OPERATORS) + len(_TASK33_OPERATORS)
 assert len(OPERATOR_REGISTRY.operator_specs) >= _PREV_COUNT + len(_TASK34_OPERATORS), (
     f"OPERATOR_REGISTRY 总数应含既有 {_PREV_COUNT} + Task3.4 {len(_TASK34_OPERATORS)} 个算子，"
+    f"实际 {len(OPERATOR_REGISTRY.operator_specs)}"
+)
+
+
+# ── Vibe-Trading Alpha Zoo 算子扩展（Phase 1 对齐）───────────────────────
+
+def _safe_div(x: torch.Tensor, y: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """安全除法：参考 Vibe-Trading safe_div。
+    y 为正时加 eps，y 为负时减 eps，y==0 时加 eps，杜绝除以零与分母抵消爆炸。
+    """
+    sign = torch.where(y >= 0, torch.ones_like(y), -torch.ones_like(y))
+    denom = y + sign * eps
+    out = x / denom
+    return torch.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+_VIBE_OPERATORS = [
+    # 安全数学与幅度算子
+    ('SAFE_DIV',        _safe_div,                                       2),
+    ('SIGNED_POWER_3',  lambda x: _signed_power(x, 3.0),                1),
+    # 极值突破算子（补齐 5 周期）
+    ('TS_MAX_5',        lambda x: _ts_rolling(x, 5).max(dim=-1).values,  1),
+    ('TS_MIN_5',        lambda x: _ts_rolling(x, 5).min(dim=-1).values,  1),
+    # 极值位置算子（10/20 周期）
+    ('TS_ARG_MAX_10',   lambda x: _ts_arg_max(x, 10),                    1),
+    ('TS_ARG_MAX_20',   lambda x: _ts_arg_max(x, 20),                    1),
+    ('TS_ARG_MIN_10',   lambda x: _ts_arg_min(x, 10),                    1),
+    ('TS_ARG_MIN_20',   lambda x: _ts_arg_min(x, 20),                    1),
+    # 线性衰减均线算子（10/20 周期）
+    ('DECAY_LINEAR_10', lambda x: _decay_linear(x, 10),                  1),
+    ('DECAY_LINEAR_20', lambda x: _decay_linear(x, 20),                  1),
+    # 跨时间跨度相关性与协方差算子（5/20 周期）
+    ('TS_CORR_5',       lambda x, y: _ts_corr(x, y, 5),                  2),
+    ('TS_CORR_20',      lambda x, y: _ts_corr(x, y, 20),                 2),
+    ('COVARIANCE_5',    lambda x, y: _ts_covariance(x, y, 5),            2),
+    ('COVARIANCE_20',   lambda x, y: _ts_covariance(x, y, 20),           2),
+    # 累积乘积算子（10 周期）
+    ('PRODUCT_10',      lambda x: _ts_product(x, 10),                    1),
+    # 动量差分算子（10/20 周期）
+    ('DELTA_10',        lambda x: _delta(x, 10),                         1),
+    ('DELTA_20',        lambda x: _delta(x, 20),                         1),
+]
+
+
+def _register_vibe_operators(registry: Registry) -> None:
+    """注册来自 Vibe-Trading Alpha Zoo 对齐的增强算子。
+    二元算子经 _with_shape_check 包装；一元算子直接注册。
+    """
+    for name, transform, arity in _VIBE_OPERATORS:
+        fn = _with_shape_check(name, transform) if arity >= 2 else transform
+        registry.register_operator(
+            OperatorSpec(name=name, arity=arity, transform=fn)
+        )
+
+
+_register_vibe_operators(OPERATOR_REGISTRY)
+
+# 重新派生 OPS_CONFIG 导出视图（追加新算子后更新）
+OPS_CONFIG = [
+    (spec.name, spec.transform, spec.arity)
+    for spec in OPERATOR_REGISTRY.operator_specs
+]
+
+_EXPECTED_VIBE_NAMES = {name for name, _, _ in _VIBE_OPERATORS}
+_REGISTERED_NAMES_VIBE = set(OPERATOR_REGISTRY.operator_names)
+assert _EXPECTED_VIBE_NAMES <= _REGISTERED_NAMES_VIBE, (
+    f"Vibe 算子未全部注册: {_EXPECTED_VIBE_NAMES - _REGISTERED_NAMES_VIBE}"
+)
+_PREV_COUNT_VIBE = _PREV_COUNT + len(_TASK34_OPERATORS)
+assert len(OPERATOR_REGISTRY.operator_specs) >= _PREV_COUNT_VIBE + len(_VIBE_OPERATORS), (
+    f"OPERATOR_REGISTRY 总数应含既有 {_PREV_COUNT_VIBE} + Vibe {len(_VIBE_OPERATORS)} 个算子，"
     f"实际 {len(OPERATOR_REGISTRY.operator_specs)}"
 )

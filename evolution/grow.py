@@ -242,6 +242,7 @@ class GrowEngine:
             "score": final_score,
             "raw_sortino": round(sortino, 4),
             "feedback_bonus": round(bonus, 4),
+            "vocab_version": FORMULA_VOCAB.version,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "parent_strategy": base_strategy.get("formula_decoded", "base"),
         }

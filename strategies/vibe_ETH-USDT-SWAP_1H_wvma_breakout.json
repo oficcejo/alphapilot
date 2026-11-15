@@ -1,0 +1,18 @@
+{
+  "vocab_version": "v4b7b63d89e9b",
+  "symbol": "ETH-USDT-SWAP",
+  "timeframe": "1H",
+  "formula": [
+    65,
+    158,
+    76,
+    83,
+    71,
+    83,
+    141
+  ],
+  "best_score": 6.15,
+  "formula_decoded": "WVMA_5 -> DELTA_10 -> RSQR_10 -> MUL -> KBAR_EFF -> MUL -> TANH_SQUASH",
+  "alpha_source": "Vibe-Trading VWAP Momentum + Qlib 158 KBar Efficiency",
+  "description": "10-period delta of 5-period VWMA weighted by RSQR_10 regression fit and candlestick efficiency"
+}

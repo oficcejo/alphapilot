@@ -18,7 +18,9 @@ def test_get_audit_log_exists():
 def test_problematic_strategy_flagged_by_validator():
     """验证此前导致退化的线上 5m 公式被 validate_formula_structure 拦截。"""
     # AMIHUD_ILLIQ -> TS_SKEW_10 -> TS_QUANTILE_10 -> TS_ARG_MIN_5 -> TS_MAX_20 -> TS_RANK_10 -> JUMP -> ABS
-    problem_formula = [41, 96, 95, 101, 98, 84, 73, 70]
+    name_to_id = {name: idx for idx, name in enumerate(FORMULA_VOCAB.token_names)}
+    seq = ["AMIHUD_ILLIQ", "TS_SKEW_10", "TS_QUANTILE_10", "TS_ARG_MIN_5", "TS_MAX_20", "TS_RANK_10", "JUMP", "ABS"]
+    problem_formula = [name_to_id[n] for n in seq]
     violations = validate_formula_structure(problem_formula, FORMULA_VOCAB.token_names)
     assert len(violations) >= 1
     # 必须检测到位置算子接极值算子或末尾恒正
@@ -27,7 +29,9 @@ def test_problematic_strategy_flagged_by_validator():
 
 def test_problematic_strategy_flagged_by_engine():
     """验证 _is_degenerate_formula 能拦截问题公式。"""
-    problem_formula = [41, 96, 95, 101, 98, 84, 73, 70]
+    name_to_id = {name: idx for idx, name in enumerate(FORMULA_VOCAB.token_names)}
+    seq = ["AMIHUD_ILLIQ", "TS_SKEW_10", "TS_QUANTILE_10", "TS_ARG_MIN_5", "TS_MAX_20", "TS_RANK_10", "JUMP", "ABS"]
+    problem_formula = [name_to_id[n] for n in seq]
     is_deg, reason = _is_degenerate_formula(problem_formula)
     assert is_deg is True
     assert "ABS" in reason or "恒正" in reason

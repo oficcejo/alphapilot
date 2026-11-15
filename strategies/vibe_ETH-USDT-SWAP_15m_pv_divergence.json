@@ -1,0 +1,17 @@
+{
+  "vocab_version": "v4b7b63d89e9b",
+  "symbol": "ETH-USDT-SWAP",
+  "timeframe": "15m",
+  "formula": [
+    72,
+    151,
+    69,
+    143,
+    144,
+    141
+  ],
+  "best_score": 5.42,
+  "formula_decoded": "CORD_5 -> DECAY_LINEAR_10 -> KLOW -> SAFE_DIV -> SIGNED_POWER_3 -> TANH_SQUASH",
+  "alpha_source": "Vibe-Trading Alpha Zoo + Qlib 158 PV Divergence",
+  "description": "5-period return-volume correlation decayed over 10 periods, scaled by lower shadow with safe division and signed cubic power squashing"
+}

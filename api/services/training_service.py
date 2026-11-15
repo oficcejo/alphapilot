@@ -5,10 +5,23 @@ api/services/training_service.py — 训练编排服务
 """
 import sys
 import json
+import math
 import pathlib
 import threading
 import traceback
 from typing import Optional
+
+def _sanitize_floats(obj):
+    """递归将 dict/list 中的 inf, -inf, nan 替换为 None，确保 JSON 规范兼容。"""
+    if isinstance(obj, float):
+        if math.isinf(obj) or math.isnan(obj):
+            return None
+        return obj
+    elif isinstance(obj, dict):
+        return {k: _sanitize_floats(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_sanitize_floats(v) for v in obj]
+    return obj
 
 import torch
 import numpy as np
@@ -73,7 +86,8 @@ class TrainingService:
                         # step 是 0-based，current_step 显示为已完成步数
                         task["current_step"] = steps[-1] + 1
                     if best_scores:
-                        task["best_score"] = best_scores[-1]
+                        val = best_scores[-1]
+                        task["best_score"] = None if (isinstance(val, float) and (math.isinf(val) or math.isnan(val))) else val
                     # 读取更多实时字段（如果历史中有）
                     if "restart_count" in hist:
                         task["restart_count"] = hist["restart_count"]
@@ -246,7 +260,7 @@ class TrainingService:
             return {"error": "训练历史文件不存在", "path": str(p)}
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-            return data
+            return _sanitize_floats(data)
         except Exception as e:
             return {"error": str(e)}
 

@@ -1,4 +1,4 @@
-﻿"""
+"""
 model_core/features.py -- MT5 Feature Engineering (20 features)
 
 Features:
@@ -1317,6 +1317,169 @@ class MT5FeatureEngineer:
         zscore  = (ret20 - cs_mean) / cs_std             # [N, T]
         return cls._norm(cls._clean(zscore))
 
+    # ── Phase 2: Vibe-Trading Alpha Zoo 特征计算实现 ──────────────────
+
+    @classmethod
+    def _c_wvma_5(cls, raw: dict) -> torch.Tensor:
+        """Qlib158 WVMA5: ts_std(|ret|*v, 5) / ts_mean(|ret|*v, 5)"""
+        close = raw["close"].float(); volume = raw["volume"].float()
+        return cls._calc_wvma(close, volume, 5)
+
+    @classmethod
+    def _c_wvma_20(cls, raw: dict) -> torch.Tensor:
+        """Qlib158 WVMA20: ts_std(|ret|*v, 20) / ts_mean(|ret|*v, 20)"""
+        close = raw["close"].float(); volume = raw["volume"].float()
+        return cls._calc_wvma(close, volume, 20)
+
+    @classmethod
+    def _calc_wvma(cls, close: torch.Tensor, volume: torch.Tensor, w: int) -> torch.Tensor:
+        eps = cls._EPS
+        ret = (close[:, 1:] - close[:, :-1]).abs() / (close[:, :-1].abs() + eps)
+        pad = torch.zeros(close.shape[0], 1, device=close.device, dtype=close.dtype)
+        arv = torch.cat([pad, ret], dim=1) * volume
+        std = cls._rolling_std(arv, w)
+        mean = cls._rolling_mean(arv, w) + eps
+        return cls._norm(std / mean)
+
+    @classmethod
+    def _c_klen(cls, raw: dict) -> torch.Tensor:
+        """Qlib158 KLEN: (high - low) / open (K线实体全振幅)"""
+        open_ = raw["open"].float(); high = raw["high"].float(); low = raw["low"].float()
+        eps = cls._EPS
+        return cls._norm((high - low) / (open_.abs() + eps))
+
+    @classmethod
+    def _c_kup(cls, raw: dict) -> torch.Tensor:
+        """Qlib158 KUP: (high - max(open, close)) / open (上影线抛压)"""
+        open_ = raw["open"].float(); high = raw["high"].float(); close = raw["close"].float()
+        eps = cls._EPS
+        upper = torch.maximum(open_, close)
+        return cls._norm((high - upper) / (open_.abs() + eps))
+
+    @classmethod
+    def _c_klow(cls, raw: dict) -> torch.Tensor:
+        """Qlib158 KLOW: (min(open, close) - low) / open (下影线支撑)"""
+        open_ = raw["open"].float(); low = raw["low"].float(); close = raw["close"].float()
+        eps = cls._EPS
+        lower = torch.minimum(open_, close)
+        return cls._norm((lower - low) / (open_.abs() + eps))
+
+    @classmethod
+    def _c_ksft(cls, raw: dict) -> torch.Tensor:
+        """Qlib158 KSFT: (2*close - high - low) / open (收盘位置偏移)"""
+        open_ = raw["open"].float(); high = raw["high"].float()
+        low = raw["low"].float(); close = raw["close"].float()
+        eps = cls._EPS
+        return cls._norm((2.0 * close - high - low) / (open_.abs() + eps))
+
+    @classmethod
+    def _c_kbar_eff(cls, raw: dict) -> torch.Tensor:
+        """Alpha#101: (close - open) / (high - low + eps) (实体在振幅中的多空效率)"""
+        open_ = raw["open"].float(); high = raw["high"].float()
+        low = raw["low"].float(); close = raw["close"].float()
+        eps = cls._EPS
+        return cls._clean(torch.clamp((close - open_) / (high - low + eps), -1.0, 1.0))
+
+    @classmethod
+    def _c_cord_5(cls, raw: dict) -> torch.Tensor:
+        """Qlib158 CORD5: ts_corr(ret, delta_log_v, 5) (5日收益与量变化相关)"""
+        close = raw["close"].float(); volume = raw["volume"].float()
+        return cls._calc_cord(close, volume, 5)
+
+    @classmethod
+    def _c_cord_20(cls, raw: dict) -> torch.Tensor:
+        """Qlib158 CORD20: ts_corr(ret, delta_log_v, 20) (20日收益与量变化相关)"""
+        close = raw["close"].float(); volume = raw["volume"].float()
+        return cls._calc_cord(close, volume, 20)
+
+    @classmethod
+    def _calc_cord(cls, close: torch.Tensor, volume: torch.Tensor, w: int) -> torch.Tensor:
+        eps = cls._EPS
+        ret = torch.log(close[:, 1:] / (close[:, :-1] + eps))
+        log_v = torch.log(volume + 1.0)
+        d_log_v = log_v[:, 1:] - log_v[:, :-1]
+        pad = torch.zeros(close.shape[0], 1, device=close.device, dtype=close.dtype)
+        ret = torch.cat([pad, ret], dim=1)
+        d_log_v = torch.cat([pad, d_log_v], dim=1)
+        return cls._clean(cls._ts_corr(ret, d_log_v, w))
+
+    @classmethod
+    def _c_vsump_5(cls, raw: dict) -> torch.Tensor:
+        """Qlib158 VSUMP5: sum(max(delta_v, 0), 5) / sum(|delta_v|, 5) (5日正成交量变化占比)"""
+        volume = raw["volume"].float()
+        return cls._calc_vsump(volume, 5)
+
+    @classmethod
+    def _c_vsump_20(cls, raw: dict) -> torch.Tensor:
+        """Qlib158 VSUMP20: sum(max(delta_v, 0), 20) / sum(|delta_v|, 20) (20日正成交量变化占比)"""
+        volume = raw["volume"].float()
+        return cls._calc_vsump(volume, 20)
+
+    @classmethod
+    def _calc_vsump(cls, volume: torch.Tensor, w: int) -> torch.Tensor:
+        eps = cls._EPS
+        dv = volume[:, 1:] - volume[:, :-1]
+        pad = torch.zeros(volume.shape[0], 1, device=volume.device, dtype=volume.dtype)
+        dv = torch.cat([pad, dv], dim=1)
+        pos_dv = torch.relu(dv)
+        abs_dv = dv.abs()
+        N, T = volume.shape
+        pad_w = torch.zeros(N, w - 1, device=volume.device, dtype=volume.dtype)
+        sum_pos = torch.cat([pad_w, pos_dv], dim=1).unfold(1, w, 1).sum(dim=-1)
+        sum_abs = torch.cat([pad_w, abs_dv], dim=1).unfold(1, w, 1).sum(dim=-1) + eps
+        return cls._norm(sum_pos / sum_abs - 0.5)
+
+    @classmethod
+    def _c_rsqr_10(cls, raw: dict) -> torch.Tensor:
+        """Qlib158 RSQR10: ts_corr(close, t, 10)^2 (10周期线性趋势度)"""
+        close = raw["close"].float()
+        return cls._calc_rsqr(close, 10)
+
+    @classmethod
+    def _c_rsqr_30(cls, raw: dict) -> torch.Tensor:
+        """Qlib158 RSQR30: ts_corr(close, t, 30)^2 (30周期线性趋势度)"""
+        close = raw["close"].float()
+        return cls._calc_rsqr(close, 30)
+
+    @classmethod
+    def _calc_rsqr(cls, close: torch.Tensor, w: int) -> torch.Tensor:
+        N, T = close.shape
+        t = torch.arange(T, device=close.device, dtype=close.dtype).unsqueeze(0).expand(N, T)
+        corr = cls._ts_corr(close, t, w)
+        return cls._norm(corr ** 2)
+
+    @classmethod
+    def _c_alpha_006(cls, raw: dict) -> torch.Tensor:
+        """Alpha#006: -1 * correlation(open, volume, 10) (开盘量价背离)"""
+        open_ = raw["open"].float(); volume = raw["volume"].float()
+        corr = cls._ts_corr(open_, volume, 10)
+        return cls._clean(-1.0 * corr)
+
+    @classmethod
+    def _c_alpha_012(cls, raw: dict) -> torch.Tensor:
+        """Alpha#012: sign(delta(volume, 1)) * (-1 * delta(close, 1)) (量增价跌/量缩价涨识别)"""
+        close = raw["close"].float(); volume = raw["volume"].float()
+        dv = volume[:, 1:] - volume[:, :-1]
+        dc = close[:, 1:] - close[:, :-1]
+        pad = torch.zeros(close.shape[0], 1, device=close.device, dtype=close.dtype)
+        dv = torch.cat([pad, dv], dim=1)
+        dc = torch.cat([pad, dc], dim=1)
+        sig = torch.sign(dv) * (-1.0 * dc)
+        return cls._norm(sig)
+
+    @classmethod
+    def _c_alpha_054(cls, raw: dict) -> torch.Tensor:
+        """Alpha#054: -1 * ((low-close)*(open^5)) / ((low-high)*(close^5))"""
+        open_ = raw["open"].float(); high = raw["high"].float()
+        low = raw["low"].float(); close = raw["close"].float()
+        eps = cls._EPS
+        ratio = open_ / (close + eps)
+        ratio5 = torch.clamp(ratio ** 5, 0.0, 1e4)
+        num = (low - close) * ratio5
+        denom = (low - high) + eps
+        out = -1.0 * (num / denom)
+        return cls._norm(out)
+
     # ── main ─────────────────────────────────────────────────────────────
 
     @staticmethod
@@ -1420,7 +1583,25 @@ _FEATURE_DEFS = [
     # task 5.8 跨截面相对强弱补充 cross_sectional (63-64)
     ("CS_RANK_RET5",    "cross_sectional", _fe._c_cs_rank_ret5),
     ("CS_ZSCORE_RET20", "cross_sectional", _fe._c_cs_zscore_ret20),
+    # Phase 2: Vibe-Trading Alpha Zoo 特征对齐 (Qlib158 / Alpha101 / GTJA191) (65-80)
+    ("WVMA_5",          "volatility",      _fe._c_wvma_5),
+    ("WVMA_20",         "volatility",      _fe._c_wvma_20),
+    ("KLEN",            "volatility",      _fe._c_klen),
+    ("KUP",             "reversal",        _fe._c_kup),
+    ("KLOW",            "reversal",        _fe._c_klow),
+    ("KSFT",            "momentum",        _fe._c_ksft),
+    ("KBAR_EFF",        "momentum",        _fe._c_kbar_eff),
+    ("CORD_5",          "volume",          _fe._c_cord_5),
+    ("CORD_20",         "volume",          _fe._c_cord_20),
+    ("VSUMP_5",         "volume",          _fe._c_vsump_5),
+    ("VSUMP_20",        "volume",          _fe._c_vsump_20),
+    ("RSQR_10",         "trend",           _fe._c_rsqr_10),
+    ("RSQR_30",         "trend",           _fe._c_rsqr_30),
+    ("ALPHA_006",       "volume",          _fe._c_alpha_006),
+    ("ALPHA_012",       "reversal",        _fe._c_alpha_012),
+    ("ALPHA_054",       "reversal",        _fe._c_alpha_054),
 ]
+
 
 # ── 激活特征白名单（特征剪枝机制，2026-07-04）──────────────────────────
 # 若项目根目录存在 active_features.json（由 prune_features.py 生成），

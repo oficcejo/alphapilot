@@ -1,0 +1,18 @@
+{
+  "vocab_version": "v4b7b63d89e9b",
+  "symbol": "SOL-USDT-SWAP",
+  "timeframe": "15m",
+  "formula": [
+    79,
+    152,
+    51,
+    82,
+    145,
+    137,
+    139
+  ],
+  "best_score": 5.78,
+  "formula_decoded": "ALPHA_012 -> DECAY_LINEAR_20 -> DONCHIAN_POS_20 -> SUB -> TS_MAX_5 -> TS_ZSCORE_20 -> CLIP",
+  "alpha_source": "Alpha 101 Alpha_012 + Donchian Channel Position Reversal",
+  "description": "Alpha 012 volume-price reversal decayed over 20 periods, contrasted against Donchian channel position, normalized by rolling max and z-score"
+}

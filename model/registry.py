@@ -162,6 +162,20 @@ class Registry:
     def __contains__(self, name: str) -> bool:
         return name in self._names
 
+    def get_operator(self, name: str) -> OperatorSpec:
+        """按名称查找 OperatorSpec，找不到抛 KeyError。"""
+        for spec in self._operator_specs:
+            if spec.name == name:
+                return spec
+        raise KeyError(f"Operator '{name}' not found in registry")
+
+    def get_feature(self, name: str) -> FeatureSpec:
+        """按名称查找 FeatureSpec，找不到抛 KeyError。"""
+        for spec in self._feature_specs:
+            if spec.name == name:
+                return spec
+        raise KeyError(f"Feature '{name}' not found in registry")
+
     # ── 注册接口 ────────────────────────────────────────────────────────
 
     def register_feature(self, spec: FeatureSpec) -> None:

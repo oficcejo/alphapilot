@@ -1209,7 +1209,8 @@ class AlphaEngine:
             if hist_path.is_dir():
                 hist_path = hist_path / f"training_history{sym_tag}.json"
             payload = {
-                k: v for k, v in self.training_history.items()
+                k: [None if (isinstance(x, float) and (math.isinf(x) or math.isnan(x))) else x for x in v] if isinstance(v, list) else v
+                for k, v in self.training_history.items()
                 if k != "_low_entropy_streak"
             }
             with open(hist_path, "w", encoding="utf-8") as fp:
