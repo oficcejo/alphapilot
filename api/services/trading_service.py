@@ -879,6 +879,26 @@ class TradingService:
                 "reason": f"持仓 ({net_current_sz:.4f}) 已达到目标 ({target_held_sz:.4f})，维持现有持仓",
                 "live": False,
             }
+        elif (
+            Config.MIN_REBALANCE_NOTIONAL > 0
+            and target_held_sz * net_current_sz > 0
+            and abs(delta_sz) * ct_val * last_price < Config.MIN_REBALANCE_NOTIONAL
+        ):
+            # 状态 3.5: 微幅调仓过滤 (HOLD) —— 同向增减仓的增量名义价值低于阈值时跳过下单，
+            # 避免信号微小抖动（如 -0.397 → -0.394）触发的噪声调仓空耗手续费。
+            # 按名义价值 (张数 × ctVal × 最新价) 过滤，天然适配各币种合约面值差异；
+            # 全额平仓(状态1)、新开仓与反转(状态4)不经过此分支，出场与信号跟随不受影响；
+            # 被跳过的增量会在后续 bar 随信号目标自然累积，超过阈值后一并补齐。
+            delta_notional = abs(delta_sz) * ct_val * last_price
+            order_result = {
+                "action": "HOLD",
+                "skipped": True,
+                "reason": (
+                    f"微幅调仓过滤：增量 {abs(delta_sz):.4f} 张 ≈ {delta_notional:.2f} USDT"
+                    f" < 阈值 {Config.MIN_REBALANCE_NOTIONAL:.2f} USDT，维持现有持仓"
+                ),
+                "live": False,
+            }
         else:
             # 状态 4: 发送调仓订单（开新仓、反转、或增减仓）
             # 4.1 设置杠杆

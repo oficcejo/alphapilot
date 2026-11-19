@@ -483,6 +483,7 @@ ETH-USDT      训练 9000 步       离线回测        动态止损            
 | `MAX_LEVERAGE` | `20` | — | 最大杠杆 |
 | `MAX_DAILY_LOSS_PCT` | `0.10` | — | 单日最大亏损 10% |
 | `MAX_POSITION_PCT` | `0.30` | — | 单品种最大仓位占比 |
+| `MIN_REBALANCE_NOTIONAL` | `20` | `MIN_REBALANCE_NOTIONAL` | 微幅调仓过滤阈值（USDT 名义价值）：同向增减仓增量低于该值时跳过下单，省手续费；按名义价值过滤自动适配各币种 ctVal；全额平仓/新开仓/反转不受影响；`0` = 关闭 |
 | `WEB_HOST` | `0.0.0.0` | `WEB_HOST` | Web 监听地址 |
 | `WEB_PORT` | `8009` | `WEB_PORT` | Web 监听端口 |
 

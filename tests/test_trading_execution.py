@@ -951,3 +951,101 @@ def test_auto_trade_loop_order_variable_defined(mock_trading_service):
 
 
 
+
+
+# ── 微幅调仓过滤 (MIN_REBALANCE_NOTIONAL) ─────────────────────────────────
+# BTC-USDT-SWAP 口径: ctVal=0.01 BTC, 价 64000 → 1 张 = 640 USDT;
+# capital=1000, lev=5, max_pos=0.3 → 目标名义 = 1500×|signal|, 目标张数 = 1500×|signal|/640
+
+BTC_INST = {
+    "ctVal": "0.01", "lotSz": "0.01", "minSz": "0.01",
+    "tickSz": "0.1", "ctValCcy": "BTC",
+}
+
+def _btc_candles(px=64000.0):
+    return [[str(1600000000000 + i * 900000), str(px), str(px + 100), str(px - 100), str(px), "100", "", "", "1"]
+            for i in range(800)]
+
+
+def _run_btc_execute(service, mock_client, signal, current_short_sz):
+    mock_client.get_positions_detail.return_value = (
+        [{"inst_id": "BTC-USDT-SWAP", "pos_side": "short", "pos": current_short_sz}] if current_short_sz else []
+    )
+    mock_client.get_account_summary.return_value = {"total_eq": 1000.0, "avail_bal": 800.0}
+    mock_client.get_recent_candles.return_value = _btc_candles()
+
+    with patch("api.services.trading_service.get_private_client", return_value=mock_client), \
+         patch("api.services.trading_service.get_public_client", return_value=mock_client), \
+         patch("api.services.trading_service.load_strategy",
+               return_value={"formula": [0, 69], "formula_decoded": "RET -> NEG", "best_score": 2.5}), \
+         patch("api.services.trading_service.eval_strategy_factor", return_value=torch.zeros(1, 800)), \
+         patch("api.services.trading_service.compute_target_positions_stateless",
+               return_value=torch.tensor([[signal]])):
+        with patch.object(Config, "TRADING_MODE", "live"):
+            return service.execute_signal(
+                strategy_path="dummy.json",
+                inst_id="BTC-USDT-SWAP",
+                capital=1000.0,
+                leverage=5,
+                bar="30m",
+                max_position_pct=0.30,
+            )
+
+
+def test_min_rebalance_threshold_filters_dust_adjustment(mock_trading_service):
+    """BTC 同向微幅调仓（0.02张≈12.8U < 阈值20U）应被过滤，不下单。"""
+    service = mock_trading_service
+    service._instrument_cache["BTC-USDT-SWAP"] = dict(BTC_INST)
+    mock_client = MagicMock()
+
+    # signal 0.1368 → 目标 0.32 张; 当前 -0.30 → delta -0.02 张 = 12.8 USDT < 20
+    res = _run_btc_execute(service, mock_client, signal=-0.1368, current_short_sz=0.30)
+
+    assert res["order"]["skipped"] is True
+    assert res["order"]["action"] == "HOLD"
+    assert "微幅调仓过滤" in res["order"]["reason"]
+    mock_client.place_order.assert_not_called()
+
+
+def test_min_rebalance_threshold_passes_meaningful_adjustment(mock_trading_service):
+    """BTC 同向有效调仓（0.28张≈179U > 阈值）正常下单，不被误拦。"""
+    service = mock_trading_service
+    service._instrument_cache["BTC-USDT-SWAP"] = dict(BTC_INST)
+    mock_client = MagicMock()
+    mock_client.place_order.return_value = {"clOrdId": "ap123", "tag": "c314b0aecb5bBCDE", "live": True}
+
+    # signal 0.25 → 目标 0.58 张; 当前 -0.30 → delta -0.28 张 = 179.2 USDT > 20
+    res = _run_btc_execute(service, mock_client, signal=-0.25, current_short_sz=0.30)
+
+    assert res["order"].get("skipped") is not True
+    mock_client.place_order.assert_called_once()
+    assert mock_client.place_order.call_args.kwargs["side"] == "sell"
+
+
+def test_min_rebalance_threshold_never_blocks_full_close(mock_trading_service):
+    """全额平仓（目标=0）不受微幅过滤影响——即使是低于阈值的尘埃仓位也必须能出场。"""
+    service = mock_trading_service
+    service._instrument_cache["BTC-USDT-SWAP"] = dict(BTC_INST)
+    mock_client = MagicMock()
+    mock_client.close_position.return_value = {"code": "0", "msg": "success"}
+
+    # 当前 -0.02 张 ≈ 12.8 USDT < 阈值, 但目标为 0 → 必须平仓
+    res = _run_btc_execute(service, mock_client, signal=0.0, current_short_sz=0.02)
+
+    assert res["order"]["action"] == "CLOSE"
+    mock_client.close_position.assert_called_once()
+
+
+def test_min_rebalance_threshold_disabled_when_zero(mock_trading_service):
+    """阈值设为 0 时关闭过滤，微幅调仓恢复正常下单逻辑。"""
+    service = mock_trading_service
+    service._instrument_cache["BTC-USDT-SWAP"] = dict(BTC_INST)
+    mock_client = MagicMock()
+    mock_client.place_order.return_value = {"clOrdId": "ap123", "tag": "c314b0aecb5bBCDE", "live": True}
+
+    with patch.object(Config, "MIN_REBALANCE_NOTIONAL", 0.0):
+        # 与 dust 用例相同: delta -0.02 张 = 12.8 USDT, 但阈值关闭 → 正常下单
+        res = _run_btc_execute(service, mock_client, signal=-0.1368, current_short_sz=0.30)
+
+    assert res["order"].get("skipped") is not True
+    mock_client.place_order.assert_called_once()
