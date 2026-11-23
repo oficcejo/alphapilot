@@ -1,0 +1,18 @@
+{
+  "vocab_version": "v4b7b63d89e9b",
+  "symbol": "SOL-USDT-SWAP",
+  "timeframe": "30m",
+  "data_file": "/www/wwwroot/alphapolit-plus-zhu/data/SOL-USDT-SWAP_30m.parquet",
+  "formula": [
+    28,
+    114,
+    41,
+    143,
+    157,
+    129,
+    37,
+    81
+  ],
+  "best_score": 4.825317859649658,
+  "formula_decoded": "ROC_12 -> TS_MAX_20 -> AMIHUD_ILLIQ -> SAFE_DIV -> PRODUCT_10 -> TS_SUM_10 -> GK_VOL -> ADD"
+}

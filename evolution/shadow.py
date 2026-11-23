@@ -46,7 +46,7 @@ class ShadowEvaluator:
         self.pool_file = self.data_dir / "shadow_pool.json"
 
         self.vm = StackVM()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.pool: Dict[str, dict] = {}
         self._load_pool()
 
@@ -292,6 +292,23 @@ class ShadowEvaluator:
             if candidate_id in self.pool:
                 self.pool[candidate_id]["status"] = new_status
         self._save_pool()
+
+    def delete_candidate(self, candidate_id: str) -> bool:
+        """从影子池中删除指定候选策略。"""
+        with self._lock:
+            if candidate_id in self.pool:
+                del self.pool[candidate_id]
+                self._save_pool()
+                return True
+        return False
+
+    def clear_pool(self) -> int:
+        """清空影子池中所有候选策略。"""
+        with self._lock:
+            count = len(self.pool)
+            self.pool.clear()
+            self._save_pool()
+            return count
 
 
 # 单例管理

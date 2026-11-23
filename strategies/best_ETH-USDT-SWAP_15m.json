@@ -1,0 +1,18 @@
+{
+  "vocab_version": "v4b7b63d89e9b",
+  "symbol": "ETH-USDT-SWAP",
+  "timeframe": "15m",
+  "data_file": "/www/wwwroot/alphapilot-plus-8011/data/ETH-USDT-SWAP_15m.parquet",
+  "formula": [
+    66,
+    37,
+    110,
+    4,
+    88,
+    114,
+    91,
+    157
+  ],
+  "best_score": 5.917059898376465,
+  "formula_decoded": "WVMA_20 -> GK_VOL -> EMA_20 -> SLOPE20 -> GATE -> TS_MAX_20 -> DELAY1 -> PRODUCT_10"
+}

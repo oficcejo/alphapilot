@@ -1,0 +1,18 @@
+{
+  "vocab_version": "v4b7b63d89e9b",
+  "symbol": "BTC-USDT-SWAP",
+  "timeframe": "15m",
+  "data_file": "/www/wwwroot/alphapolit-plus-zhu/data/BTC-USDT-SWAP_15m.parquet",
+  "formula": [
+    66,
+    113,
+    113,
+    123,
+    113,
+    152,
+    113,
+    147
+  ],
+  "best_score": 5.390501499176025,
+  "formula_decoded": "WVMA_20 -> TS_MIN_20 -> TS_MIN_20 -> TS_DECAY_EXP_5 -> TS_MIN_20 -> DECAY_LINEAR_20 -> TS_MIN_20 -> TS_ARG_MAX_10"
+}

@@ -1,0 +1,18 @@
+{
+  "vocab_version": "v4b7b63d89e9b",
+  "symbol": "ETH-USDT-SWAP",
+  "timeframe": "1H",
+  "data_file": "/www/wwwroot/alphapolit-plus/data/ETH-USDT-SWAP_1H.parquet",
+  "formula": [
+    37,
+    157,
+    146,
+    114,
+    118,
+    85,
+    116,
+    114
+  ],
+  "best_score": 3.995026111602783,
+  "formula_decoded": "GK_VOL -> PRODUCT_10 -> TS_MIN_5 -> TS_MAX_20 -> DECAY_LINEAR_5 -> NEG -> TS_ARG_MAX_5 -> TS_MAX_20"
+}

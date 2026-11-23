@@ -1,0 +1,18 @@
+{
+  "vocab_version": "v4b7b63d89e9b",
+  "symbol": "ETH-USDT-SWAP",
+  "timeframe": "30m",
+  "data_file": "/www/wwwroot/alphapolit-plus/data/ETH-USDT-SWAP_30m.parquet",
+  "formula": [
+    66,
+    94,
+    89,
+    55,
+    152,
+    87,
+    94,
+    83
+  ],
+  "best_score": 4.282840728759766,
+  "formula_decoded": "WVMA_20 -> TS_MEAN_10 -> JUMP -> SUPERTREND_DIR -> DECAY_LINEAR_20 -> SIGN -> TS_MEAN_10 -> MUL"
+}

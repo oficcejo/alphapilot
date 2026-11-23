@@ -1,0 +1,18 @@
+{
+  "vocab_version": "v4b7b63d89e9b",
+  "symbol": "BTC-USDT-SWAP",
+  "timeframe": "30m",
+  "data_file": "/www/wwwroot/alphapolit-plus/data/BTC-USDT-SWAP_30m.parquet",
+  "formula": [
+    74,
+    65,
+    137,
+    113,
+    89,
+    90,
+    156,
+    114
+  ],
+  "best_score": 6.287746429443359,
+  "formula_decoded": "VSUMP_5 -> WVMA_5 -> TS_ZSCORE_20 -> TS_MIN_20 -> JUMP -> DECAY -> COVARIANCE_20 -> TS_MAX_20"
+}

@@ -2257,9 +2257,16 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
         <div class="card mb-6">
           <div class="card-title flex items-center justify-between">
             <span>🛡️ 影子观察池与 5 重交付门禁 (Shadow Pool & Commit Gates)</span>
-            <span class="badge ${cmt.auto_commit_enabled ? 'badge-warning' : 'badge-primary'}">
-              ${cmt.auto_commit_enabled ? '自动交付上线模式' : '人工审核交付模式 (安全推荐)'}
-            </span>
+            <div class="flex items-center gap-2">
+              <span class="badge ${cmt.auto_commit_enabled ? 'badge-warning' : 'badge-primary'}">
+                ${cmt.auto_commit_enabled ? '自动交付上线模式' : '人工审核交付模式 (安全推荐)'}
+              </span>
+              ${shadowCandidates.length > 0 ? `
+                <button class="btn btn-sm btn-ghost text-danger" onclick="App.clearShadowPool()" title="清空全部影子池候选">
+                  🗑️ 清空影子池
+                </button>
+              ` : ''}
+            </div>
           </div>
           <div class="card-desc text-muted mb-4" style="font-size:13px;">
             新进化出的候选策略先进入影子池，在真实 K 线样本上与当前基线 (Score 5.819) 背靠背检验。通过 5 重安全门禁后方可交付上线。
@@ -2287,17 +2294,35 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
                     const committed = c.status === 'COMMITTED';
                     return `
                       <tr>
-                        <td><code>${c.candidate_id}</code></td>
-                        <td style="font-size:12px;font-family:var(--font-mono);max-width:320px;word-break:break-all;">
-                          ${c.formula_decoded || '-'}
+                        <td>
+                          <code>${c.candidate_id}</code>
+                          <div style="margin-top:5px;display:flex;gap:4px;align-items:center;">
+                            <span class="badge ${c.symbol && c.symbol.includes('BTC') ? 'badge-warning' : (c.symbol && c.symbol.includes('ETH') ? 'badge-primary' : 'badge-ghost')}" style="font-size:10px;font-weight:600;">
+                              ${c.symbol || '未知标的'}
+                            </span>
+                            <span class="badge badge-ghost" style="font-size:10px;">${c.timeframe || '-'}</span>
+                          </div>
+                        </td>
+                        <td style="font-size:12px;font-family:var(--font-mono);max-width:360px;word-break:break-all;">
+                          <div style="margin-bottom:4px;">
+                            <span class="badge badge-success" style="font-size:10px;padding:2px 5px;margin-right:4px;">新进化公式</span>
+                            <strong>${c.formula_decoded || '-'}</strong>
+                          </div>
+                          ${c.parent_strategy ? `
+                            <div style="font-size:11px;color:var(--text-muted);background:rgba(255,255,255,0.03);padding:4px 6px;border-radius:4px;margin-top:4px;">
+                              <span class="badge badge-ghost" style="font-size:10px;padding:1px 4px;margin-right:4px;">母体来源</span>
+                              ${c.parent_strategy}
+                            </div>
+                          ` : ''}
                         </td>
                         <td>
-                          <span style="font-weight:700;color:${passed ? 'var(--success)' : 'var(--text-primary)'}">
+                          <span style="font-weight:700;font-size:14px;color:${passed ? 'var(--success)' : 'var(--text-primary)'}">
                             ${c.score || '-'}
                           </span>
                           <span class="text-muted" style="font-size:11px;margin-left:4px;">
                             (${c.comparison?.score_improvement_pct || '基线'})
                           </span>
+                          ${c.comparison?.incumbent_score ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">母体基准: ${Number(c.comparison.incumbent_score).toFixed(3)}</div>` : ''}
                         </td>
                         <td>
                           <span class="badge ${committed ? 'badge-primary' : (passed ? 'badge-success' : 'badge-danger')}">
@@ -2305,11 +2330,16 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
                           </span>
                         </td>
                         <td>
-                          ${committed ? '<span class="text-muted text-sm">已生效</span>' : `
-                            <button class="btn btn-sm btn-success" onclick="App.commitEvolutionStrategy('${c.candidate_id}')">
-                              🚀 确认交付上线
+                          <div class="flex items-center gap-2">
+                            ${committed ? '<span class="text-muted text-sm">已生效</span>' : `
+                              <button class="btn btn-sm btn-success" onclick="App.commitEvolutionStrategy('${c.candidate_id}')">
+                                🚀 交付上线
+                              </button>
+                            `}
+                            <button class="btn btn-sm btn-ghost text-danger" onclick="App.deleteShadowCandidate('${c.candidate_id}')" title="从影子池删除此策略" style="padding:4px 8px;">
+                              🗑️
                             </button>
-                          `}
+                          </div>
                         </td>
                       </tr>
                     `;
@@ -2440,23 +2470,38 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
 
   async startEvolutionGrow(customSteps) {
     let steps = customSteps;
+    let targetStrat = 'strategies/best_BTC-USDT-SWAP_30m.json';
+    let targetInst = 'BTC-USDT-SWAP';
+    let targetBar = '30m';
+
+    try {
+      const atRes = await fetchJSON(`${API}/trading/auto/status`);
+      if (atRes && atRes.strategy_path) {
+        targetStrat = atRes.strategy_path;
+        targetInst = atRes.inst_id || targetInst;
+        targetBar = atRes.bar || targetBar;
+      }
+    } catch (err) {
+      console.warn('获取实盘策略失败，使用默认', err);
+    }
+
     if (!steps) {
-      const input = prompt("请输入本轮策略进化的探索变异步数 (建议 200 ~ 2000 步):", "300");
+      const input = prompt(`请输入本轮策略进化的探索变异步数 (建议 200 ~ 2000 步):\n当前进化目标: [${targetInst} ${targetBar}]`, "500");
       if (input === null) return;
-      steps = parseInt(input) || 300;
+      steps = parseInt(input) || 500;
     }
     try {
-      toast(`正在启动 Grow 策略进化 (${steps} 步)...`, 'info');
+      toast(`正在启动 [${targetInst} ${targetBar}] Grow 策略进化 (${steps} 步)...`, 'info');
       const res = await fetchJSON(`${API}/evolution/grow/start`, {
         method: 'POST',
         body: JSON.stringify({
-          strategy_path: 'strategies/best_ETH-USDT-SWAP_1H.json',
-          inst_id: 'ETH-USDT-SWAP',
-          bar: '1H',
+          strategy_path: targetStrat,
+          inst_id: targetInst,
+          bar: targetBar,
           steps: steps,
         }),
       });
-      toast(`Grow 策略进化已在后台启动 (${steps} 步)！`, 'success');
+      toast(`Grow 策略进化已在后台启动 [${targetInst} ${targetBar}] (${steps} 步)！`, 'success');
       this.pollEvolutionGrow();
       this.render_evolution();
     } catch (e) {
@@ -2526,6 +2571,28 @@ ${r.signal_diag.in_neutral_band ? `<div class="text-xs text-warning mt-1">⚠ �
       this.render_evolution();
     } catch (e) {
       toast(`交付失败: ${e.message}`, 'error');
+    }
+  },
+
+  async deleteShadowCandidate(candidateId) {
+    if (!confirm(`确定要从影子池中删除候选策略 ${candidateId} 吗？`)) return;
+    try {
+      const res = await fetchJSON(`${API}/evolution/shadow/${candidateId}`, { method: 'DELETE' });
+      toast(res.message || '已从影子池删除候选策略', 'success');
+      this.render_evolution();
+    } catch (e) {
+      toast(`删除失败: ${e.message}`, 'error');
+    }
+  },
+
+  async clearShadowPool() {
+    if (!confirm('确定要清空影子池中的全部候选策略吗？此操作不可撤销。')) return;
+    try {
+      const res = await fetchJSON(`${API}/evolution/shadow`, { method: 'DELETE' });
+      toast(res.message || '影子池已清空', 'success');
+      this.render_evolution();
+    } catch (e) {
+      toast(`清空失败: ${e.message}`, 'error');
     }
   },
 };

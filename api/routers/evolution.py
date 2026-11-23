@@ -229,6 +229,38 @@ async def get_shadow_pool():
         raise HTTPException(500, f"获取影子池失败: {e}")
 
 
+@router.delete("/shadow/{candidate_id}")
+async def delete_shadow_candidate(candidate_id: str):
+    """从影子观察池中删除指定候选策略。"""
+    try:
+        shadow_evaluator = get_shadow_evaluator()
+        success = shadow_evaluator.delete_candidate(candidate_id)
+        if not success:
+            raise HTTPException(404, f"未在影子池中找到候选策略 {candidate_id}")
+        return {
+            "status": "success",
+            "message": f"已成功从影子池删除候选策略 {candidate_id}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"删除候选策略失败: {e}")
+
+
+@router.delete("/shadow")
+async def clear_shadow_pool():
+    """清空影子观察池中所有候选策略。"""
+    try:
+        shadow_evaluator = get_shadow_evaluator()
+        count = shadow_evaluator.clear_pool()
+        return {
+            "status": "success",
+            "message": f"已清空影子池，共清除 {count} 个候选策略",
+        }
+    except Exception as e:
+        raise HTTPException(500, f"清空影子池失败: {e}")
+
+
 @router.post("/commit")
 async def commit_strategy(req: CommitRequest):
     """手动或系统触发将通过 5 重门禁的影子候选策略原子交付至实盘。"""
