@@ -13,6 +13,8 @@ api/services/trading_service.py — 实盘交易服务
   - 运行状态显示（账户/持仓/风控/审计统计）
 """
 import json
+import math
+import re
 import time
 import pathlib
 import threading
@@ -33,7 +35,83 @@ from model.features import MT5FeatureEngineer
 from strategy_manager.signal import compute_target_positions_stateless, signal_to_action
 from data_pipeline.okx_client import OKXClient, get_public_client, get_private_client
 from data_pipeline.okx_ws_client import okx_ws_client
+from data_pipeline.timeframe_utils import parse_bar_to_minutes
 from api.services.strategy_service import load_strategy, decode_formula, eval_strategy_factor
+
+
+# 本机器人挂出的止损单 ID (下单时生成的 attachAlgoClOrdId: "sl" + 13 位毫秒时间戳)
+_OUR_STOP_ALGO_ID = re.compile(r"^sl\d{13}$")
+
+
+def stop_cooldown_until(trigger_ts: float, bar_minutes: int, bars: int) -> float:
+    """止损出场后同向重进禁令的截止时间戳 (秒)。
+
+    bars=1 → 止损所在那根 K 线的收盘时刻；每多 1 根顺延一个周期。
+    K 线边界按 UTC 对齐的整周期时刻计算 (OKX 的 15m/30m/1H 等周期均如此)。
+    bars<=0 时返回 0，表示不设禁令。
+    """
+    if bars <= 0:
+        return 0.0
+    bar_sec = max(int(bar_minutes), 1) * 60
+    return float((math.floor(trigger_ts / bar_sec) + bars) * bar_sec)
+
+
+def clamp_target_for_stop_cooldown(
+    target_sz: float,
+    current_sz: float,
+    blocked_direction: int,
+) -> float:
+    """止损冷却期内截断目标仓位：禁止向被止损的方向开仓或加仓。
+
+    减仓、平仓、维持同向现有仓位、以及反向操作均不受影响。
+    blocked_direction: +1 表示多头刚被止损 (禁止做多)，-1 表示空头刚被止损。
+    """
+    if blocked_direction * target_sz <= 0:
+        return target_sz
+    allowed_abs = max(0.0, blocked_direction * current_sz)
+    return blocked_direction * min(abs(target_sz), allowed_abs)
+
+
+def compute_effective_capital(
+    capital: float,
+    account_eq,
+    account_upl=None,
+) -> tuple[float, dict]:
+    """仓位规模所用的本金：min(本金参数, 账户已实现权益)，只缩不放。
+
+    已实现权益 = 总权益 - 未实现盈亏。亏损平仓后基准随之缩小，之后开的仓位更小；
+    账户里超出分配额度的资金不会被用于加仓。
+    之所以不用含浮盈亏的总权益：目标仓位正比于权益，浮盈亏随价格变动，会让目标仓位
+    每根 K 线都跟着价格方向微调 (追涨小买、杀跌小卖)，白白增加调仓。
+    权益取不到、或低到不像真的 (不足本金的 20%，多半是接口异常) 时，退回本金参数。
+    """
+    detail = {
+        "capital_param": round(capital, 2),
+        "account_eq": None,
+        "realized_eq": None,
+        "effective_capital": round(capital, 2),
+        "sizing_basis": "capital",
+    }
+    if not getattr(Config, "SIZE_ON_LIVE_EQUITY", True):
+        return capital, detail
+    try:
+        eq = float(account_eq)
+        upl = float(account_upl or 0.0)
+    except (TypeError, ValueError):
+        return capital, detail
+    realized_eq = eq - upl
+    if realized_eq <= 0:
+        return capital, detail
+    detail["account_eq"] = round(eq, 2)
+    detail["realized_eq"] = round(realized_eq, 2)
+    if capital > 0 and realized_eq < 0.2 * capital:
+        detail["sizing_basis"] = "capital (已实现权益异常偏低，未采用)"
+        return capital, detail
+    effective = min(capital, realized_eq)
+    if effective < capital:
+        detail["sizing_basis"] = "min(capital, realized_equity)"
+    detail["effective_capital"] = round(effective, 2)
+    return effective, detail
 
 
 class AuditLog:
@@ -103,6 +181,8 @@ class TradingService:
         self._ladder_tp_base_sz: dict[str, float] = {}
         # 高水位价格跟踪：inst_id -> 开仓以来的极值价格（多头为最高价，空头为最低价）
         self._peak_price: dict[str, float] = {}
+        # 止损出场后的同向重进禁令：inst_id -> {"direction": +1/-1, "until": 时间戳, "source": ..., "trigger_ts": ...}
+        self._stop_exit_block: dict[str, dict] = {}
 
     # ── 状态查询 ──────────────────────────────────────────────────────────
 
@@ -395,6 +475,103 @@ class TradingService:
                 net_sz += sz
         return net_sz, positions
 
+    # ── 止损出场后的同向重进冷却 ──────────────────────────────────────────
+
+    def _mark_stop_exit(
+        self,
+        inst_id: str,
+        direction: int,
+        bar: str,
+        source: str,
+        trigger_ts: Optional[float] = None,
+    ) -> None:
+        """登记一次止损出场，按策略周期计算同向重进禁令的截止时间。
+
+        direction: +1 多头被止损，-1 空头被止损。
+        source: "exchange_sl" (交易所端止损单) / "breakeven_sl" / "trailing_sl"。
+        已经过期的触发不登记；同方向已有更晚的禁令时不覆盖。
+        """
+        bars = int(getattr(Config, "STOP_REENTRY_COOLDOWN_BARS", 0) or 0)
+        if bars <= 0:
+            return
+        ts = float(trigger_ts) if trigger_ts else time.time()
+        until = stop_cooldown_until(ts, parse_bar_to_minutes(bar), bars)
+        if until <= time.time():
+            return
+        with self._lock:
+            prev = self._stop_exit_block.get(inst_id)
+            if prev and prev.get("direction") == direction and prev.get("until", 0.0) >= until:
+                return
+            self._stop_exit_block[inst_id] = {
+                "direction": direction,
+                "until": until,
+                "source": source,
+                "trigger_ts": ts,
+            }
+
+    def _active_stop_block(self, trade_client: OKXClient, inst_id: str, bar: str) -> Optional[dict]:
+        """当前生效的同向重进禁令，无则返回 None。
+
+        两个来源合并：交易所端已触发的止损单 (查历史策略委托，重启后依然有效)，
+        以及本地登记的保本/追踪止损出场。交易所查询失败时只跳过该来源，不阻断交易。
+        """
+        bars = int(getattr(Config, "STOP_REENTRY_COOLDOWN_BARS", 0) or 0)
+        if bars <= 0:
+            return None
+        if Config.is_live():
+            # 禁令最长持续 bars 个周期，只需看这么长时间内的触发 (多留 1 分钟余量)
+            window_ms = (bars * parse_bar_to_minutes(bar) * 60 + 60) * 1000
+            now_ms = time.time() * 1000
+            try:
+                for algo in trade_client.get_algo_orders_history(inst_id, state="effective") or []:
+                    if not _OUR_STOP_ALGO_ID.match(str(algo.get("algoClOrdId") or "")):
+                        continue
+                    if not algo.get("slTriggerPx"):
+                        continue
+                    trigger_ms = int(algo.get("triggerTime") or 0)
+                    if trigger_ms <= 0 or now_ms - trigger_ms > window_ms:
+                        continue
+                    # 止损单的 side 是平仓方向：卖出止损平的是多单
+                    stopped_direction = 1 if algo.get("side") == "sell" else -1
+                    self._mark_stop_exit(inst_id, stopped_direction, bar, "exchange_sl", trigger_ms / 1000.0)
+            except Exception as e:
+                logger.warning(f"查询交易所已触发止损单失败，跳过交易所侧止损冷却检测: {e}")
+        with self._lock:
+            block = self._stop_exit_block.get(inst_id)
+            if not block:
+                return None
+            if block.get("until", 0.0) <= time.time():
+                self._stop_exit_block.pop(inst_id, None)
+                return None
+            return dict(block)
+
+    @staticmethod
+    def _get_live_price(inst_id: str, fallback: float) -> tuple[float, str]:
+        """下单瞬间的实时最新价，作为交易所端止损单的锚点。
+
+        依次尝试 WebSocket 行情缓存、REST ticker；都取不到或价格明显失真
+        (偏离已收盘价 10% 以上，多半是坏数据) 时，退回上一根 K 线的收盘价。
+        WebSocket 只在连接在线且 30 秒内还有消息时才采用，避免断线后用到过期价格。
+        返回 (价格, 来源)，来源为 "ws" / "rest" / "close"。
+        """
+        sources = []
+        try:
+            ws_status = okx_ws_client.get_status() or {}
+            ws_fresh = bool(ws_status.get("connected")) and (time.time() - float(ws_status.get("last_msg_time") or 0)) < 30
+        except Exception:
+            ws_fresh = False
+        if ws_fresh:
+            sources.append(("ws", lambda: (okx_ws_client.latest_tickers.get(inst_id) or {}).get("last")))
+        sources.append(("rest", lambda: get_public_client().get_ticker(inst_id).get("last")))
+        for source, getter in sources:
+            try:
+                px = float(getter() or 0.0)
+            except Exception:
+                continue
+            if px > 0 and (fallback <= 0 or 0.9 * fallback <= px <= 1.1 * fallback):
+                return px, source
+        return fallback, "close"
+
     def _handle_position_switch(
         self,
         trade_client: OKXClient,
@@ -616,10 +793,26 @@ class TradingService:
             param_warnings.append(f"仓位占比 {max_position_pct:.0%} 过高（单笔风险过大）")
 
         # 4. 查询合约信息 + 计算目标仓位张数与 Delta 差额
+        # 账户权益先取一次，供仓位规模与后面的保证金校验共用
+        trade_client = get_private_client()
+        account_eq = None
+        account_avail = None
+        account_upl = None
+        try:
+            acct = trade_client.get_account_summary()
+            account_eq = acct.get("total_eq")
+            account_avail = acct.get("avail_bal")
+            account_upl = acct.get("upl")
+        except Exception:
+            pass
+        # 仓位规模本金取 min(本金参数, 账户已实现权益)：权益缩水时仓位跟着缩，不会放大
+        effective_capital, sizing_detail = compute_effective_capital(capital, account_eq, account_upl)
+
         inst_info = self._get_instrument_info(inst_id)
         raw_target_sz, target_value, size_detail = self._compute_target_size(
-            signal, capital, max_position_pct, leverage, last_price, inst_info
+            signal, effective_capital, max_position_pct, leverage, last_price, inst_info
         )
+        size_detail.update(sizing_detail)
 
         lot_sz = float(inst_info.get("lotSz", 1.0)) if inst_info else 1.0
         min_sz = float(inst_info.get("minSz", 0.0)) if inst_info else 0.0
@@ -634,8 +827,32 @@ class TradingService:
         else:
             target_held_sz = -raw_target_sz
 
-        trade_client = get_private_client()
         net_current_sz, current_positions = self._get_net_position(trade_client, inst_id)
+
+        # 4.3 止损出场后的同向重进冷却：刚被止损的方向，冷却期内不开仓、不加仓
+        # (减仓、平仓、反向均不受影响)。信号在冲击后常被钉在饱和区，若放任它在止损后
+        # 下一根 K 线立刻重进，止损只会把浮亏变实亏、再在更差的价位把仓位买回来。
+        stop_cooldown_diag = {
+            "cooldown_bars": int(getattr(Config, "STOP_REENTRY_COOLDOWN_BARS", 0) or 0),
+            "blocked": False,
+        }
+        stop_block = self._active_stop_block(trade_client, inst_id, bar)
+        if stop_block:
+            clamped_target_sz = clamp_target_for_stop_cooldown(
+                target_held_sz, net_current_sz, stop_block["direction"]
+            )
+            if clamped_target_sz != target_held_sz:
+                stop_cooldown_diag.update({
+                    "blocked": True,
+                    "direction": "long" if stop_block["direction"] > 0 else "short",
+                    "source": stop_block.get("source"),
+                    "trigger_ts": stop_block.get("trigger_ts"),
+                    "until": datetime.fromtimestamp(stop_block["until"], tz=timezone.utc).isoformat(),
+                    "remaining_seconds": max(0, int(stop_block["until"] - time.time())),
+                    "original_target_sz": round(target_held_sz, 6),
+                    "adjusted_target_sz": round(clamped_target_sz, 6),
+                })
+                target_held_sz = clamped_target_sz
 
         # 4.4 阶梯主动止盈 (Ladder Take Profit)
         use_ladder_tp = Config.ENABLE_LADDER_TP if ladder_tp is None else bool(ladder_tp)
@@ -723,15 +940,7 @@ class TradingService:
 
         pos_mode = self._get_pos_mode()
 
-        # 4.5 获取账户余额（用于保证金检查）
-        account_eq = None
-        account_avail = None
-        try:
-            acct = trade_client.get_account_summary()
-            account_eq = acct.get("total_eq")
-            account_avail = acct.get("avail_bal")
-        except Exception:
-            pass
+        # 4.5 账户余额已在第 4 步取得 (account_eq / account_avail)，此处直接用于保证金校验
 
         # 5. 风控检查
         risk_checks = []
@@ -942,12 +1151,20 @@ class TradingService:
             is_reduction = (target_held_sz * net_current_sz > 0) and (abs(target_held_sz) < abs(net_current_sz))
             if is_reduction:
                 sl_price_str = None
+                sl_anchor_px, sl_anchor_source = last_price, "close"
             else:
                 stop_loss_pct = dynamic_sl_pct if harness_params else 0.03
-                if order_side == "buy":
-                    sl_price = last_price * (1.0 - stop_loss_pct)
+                # 止损锚点用下单瞬间的实时最新价，而不是上一根已收盘 K 线的收盘价：
+                # 市价单成交价与实时价只差滑点；收盘价最多旧一个周期，快行情下
+                # 会让止损离实际成本只有零点几个百分点，开仓后随即被扫掉。
+                if getattr(Config, "SL_ANCHOR_TO_LIVE_PRICE", True):
+                    sl_anchor_px, sl_anchor_source = self._get_live_price(inst_id, last_price)
                 else:
-                    sl_price = last_price * (1.0 + stop_loss_pct)
+                    sl_anchor_px, sl_anchor_source = last_price, "close"
+                if order_side == "buy":
+                    sl_price = sl_anchor_px * (1.0 - stop_loss_pct)
+                else:
+                    sl_price = sl_anchor_px * (1.0 + stop_loss_pct)
                 tick_sz = float(inst_info.get("tickSz", 0.01)) if inst_info else 0.01
                 tick_dec = len(str(tick_sz).split(".")[1]) if "." in str(tick_sz) else 2
                 sl_price_str = f"{sl_price:.{tick_dec}f}"
@@ -1008,6 +1225,24 @@ class TradingService:
                     sl_trigger_px=sl_price_str,
                 )
 
+                # 实际成交均价：仅用于审计与持仓缓存 (审计里的 last_price 是信号用的收盘价，
+                # 快行情下与成交价相差明显)，取不到不影响交易
+                fill_avg_px = None
+                if Config.is_live():
+                    for attempt in range(2):
+                        try:
+                            fill_avg_px = float(trade_client.get_order(inst_id, cl_ord_id).get("avgPx") or 0.0) or None
+                        except Exception:
+                            fill_avg_px = None
+                        if fill_avg_px:
+                            break
+                        if attempt == 0:
+                            time.sleep(0.2)
+                if isinstance(order_result, dict):
+                    order_result["fill_avg_px"] = fill_avg_px
+                    order_result["sl_anchor_px"] = sl_anchor_px if sl_price_str else None
+                    order_result["sl_anchor_source"] = sl_anchor_source if sl_price_str else None
+
                 # 更新持仓缓存
                 with self._lock:
                     self._position_cache[inst_id] = {
@@ -1018,10 +1253,11 @@ class TradingService:
                         "signal": round(signal, 4),
                         "target_sz": round(target_held_sz, 6),
                         "target_value": round(target_value, 2),
-                        "avg_px": last_price,
-                        "entry_price": last_price,
+                        "avg_px": fill_avg_px or last_price,
+                        "entry_price": fill_avg_px or last_price,
                         "stop_loss_price": sl_price_str,
                         "capital": capital,
+                        "effective_capital": effective_capital,
                         "leverage": leverage,
                         "time": int(time.time()),
                         "simulated": not Config.is_live(),
@@ -1044,6 +1280,7 @@ class TradingService:
             "target_held_sz": round(target_held_sz, 6),
             "delta_sz": round(delta_sz, 6),
             "capital": capital,
+            "effective_capital": effective_capital,
             "leverage": leverage,
             "max_position_pct": max_position_pct,
             "size_detail": size_detail,
@@ -1056,6 +1293,7 @@ class TradingService:
             "harness": harness_params.to_dict() if harness_params else None,
             "param_warnings": param_warnings if param_warnings else None,
             "ladder_tp": ladder_tp_diag,
+            "stop_cooldown": stop_cooldown_diag,
         }
         self.audit.log(audit_event)
 
@@ -1080,6 +1318,8 @@ class TradingService:
             "order": order_result,
             "receipt_id": receipt_id_val,
             "param_warnings": param_warnings if param_warnings else None,
+            "effective_capital": effective_capital,
+            "stop_cooldown": stop_cooldown_diag,
             "mode": Config.TRADING_MODE,
             "is_live": Config.is_live(),
             "strategy": {
@@ -1230,6 +1470,11 @@ class TradingService:
             if trailing_triggered:
                 # 触发追踪止损：全平剩余趋势底仓并撤销所有挂单
                 close_res = self.close_position(inst_id)
+                # 追踪止损也是止损出场：冷却期内禁止同向重进
+                self._mark_stop_exit(
+                    inst_id, 1 if net_current_sz > 0 else -1,
+                    self._auto_trade_state.get("bar") or "1H", "trailing_sl",
+                )
                 with self._lock:
                     if self._auto_trade_state.get("running"):
                         self._auto_trade_state["total_orders"] = self._auto_trade_state.get("total_orders", 0) + 1
@@ -1276,6 +1521,11 @@ class TradingService:
             if be_triggered:
                 # 触发保本止损：全平剩余仓位并撤销挂单，彻底消灭亏损
                 close_res = self.close_position(inst_id)
+                # 保本止损也是止损出场：冷却期内禁止同向重进
+                self._mark_stop_exit(
+                    inst_id, 1 if net_current_sz > 0 else -1,
+                    self._auto_trade_state.get("bar") or "1H", "breakeven_sl",
+                )
                 with self._lock:
                     if self._auto_trade_state.get("running"):
                         self._auto_trade_state["total_orders"] = self._auto_trade_state.get("total_orders", 0) + 1
@@ -1524,6 +1774,14 @@ class TradingService:
                 getattr(Config, "ENABLE_TRAILING_SL", True)
                 and self._ladder_tp_ratchet.get(inst_id, 1.0) <= Config.LADDER_TP_TIER2_CAP
             )
+            block = self._stop_exit_block.get(inst_id)
+            if block and block.get("until", 0.0) > time.time():
+                state["stop_reentry_block"] = {
+                    "direction": "long" if block["direction"] > 0 else "short",
+                    "source": block.get("source"),
+                    "until": datetime.fromtimestamp(block["until"], tz=timezone.utc).isoformat(),
+                    "remaining_seconds": max(0, int(block["until"] - time.time())),
+                }
         if state.get("strategy_path"):
             state["strategy_name"] = pathlib.Path(state["strategy_path"]).name
         if state.get("next_execute_time"):

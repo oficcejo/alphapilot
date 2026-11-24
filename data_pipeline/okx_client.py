@@ -727,6 +727,52 @@ class OKXClient:
         except Exception:
             return []
 
+    def get_order(self, inst_id: str, cl_ord_id: str) -> dict:
+        """按 clOrdId 查询单据信息 (成交均价 avgPx、累计成交量 accFillSz 等)。
+
+        非实盘模式或查询失败返回空 dict，调用方需自行兜底。
+        """
+        if not Config.is_live():
+            return {}
+        try:
+            path = f"/api/v5/trade/order?instId={inst_id}&clOrdId={cl_ord_id}"
+            headers = self._auth_headers("GET", path, "")
+            url = self.base_url + path
+            resp = self._session.get(url, headers=headers, timeout=10)
+            data = self._parse_response(resp, "OKX 查询单据")
+            items = data.get("data", [])
+            return items[0] if items else {}
+        except Exception:
+            return {}
+
+    def get_algo_orders_history(
+        self,
+        inst_id: str,
+        state: str = "effective",
+        ord_type: str = "conditional",
+        limit: int = 100,
+    ) -> list[dict]:
+        """查询历史策略委托。state 默认 effective，即已触发的止损/止盈单。
+
+        每条含 algoClOrdId、side、sz、actualSz、slTriggerPx、triggerTime(ms) 等字段。
+        非实盘模式或查询失败返回空列表。
+        """
+        if not Config.is_live():
+            return []
+        try:
+            path = (
+                f"/api/v5/trade/orders-algo-history?instType=SWAP&instId={inst_id}"
+                f"&ordType={ord_type}&state={state}&limit={limit}"
+            )
+            headers = self._auth_headers("GET", path, "")
+            url = self.base_url + path
+            resp = self._session.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("data", [])
+        except Exception:
+            return []
+
     def get_algo_orders(self, inst_id: str, ord_type: str = "conditional") -> list[dict]:
         """查询未触发的策略委托单。"""
         if not Config.is_live():

@@ -132,5 +132,18 @@ class Config:
     ENABLE_TRAILING_SL = os.getenv("ENABLE_TRAILING_SL", "1") == "1"        # 触发Tier 2后对剩余30%底仓启用高水位追踪
     TRAILING_STOP_CALLBACK_PCT = float(os.getenv("TRAILING_STOP_CALLBACK_PCT", "0.025"))  # 高位回撤回调比例 2.5%
 
+    # ── 止损与仓位执行保护 ──────────────────────────────────────────────────
+    # 止损出场后的同向重进冷却 (K 线根数)：交易所端止损或保本/追踪止损出场后，
+    # N 根 K 线内禁止向被止损的方向开仓或加仓 (减仓、平仓、反向不受影响)。
+    # N=1 表示 "止损所在的那根 K 线内不重进"，下一次信号会基于包含这次止损的完整 K 线重算。
+    # 设为 0 关闭。
+    STOP_REENTRY_COOLDOWN_BARS = int(os.getenv("STOP_REENTRY_COOLDOWN_BARS", "1"))
+    # 交易所端止损单的锚点使用下单瞬间的实时最新价，而非上一根已收盘 K 线的收盘价。
+    # 市价单成交价与实时价只差滑点；用收盘价时，快行情下止损可能离实际成本近 1~2 个百分点。
+    SL_ANCHOR_TO_LIVE_PRICE = os.getenv("SL_ANCHOR_TO_LIVE_PRICE", "1") == "1"
+    # 仓位规模按 min(本金参数, 账户实时权益) 计算：只缩不放。
+    # 权益低于本金时按权益计 (回撤中自动降仓)，权益高于本金时仍按本金计。
+    SIZE_ON_LIVE_EQUITY = os.getenv("SIZE_ON_LIVE_EQUITY", "1") == "1"
+
 # ── 运行时单例 ─────────────────────────────────────────────────────────────
 cfg = Config()

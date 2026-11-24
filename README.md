@@ -388,6 +388,8 @@ ETH-USDT      训练 9000 步       离线回测        动态止损            
 - **风控闸门**：
   - 动态自适应止损点（结合 Harness 微观体制自适应收紧/放宽）
   - 杠杆上限检查（默认 max 20x）
+  - 止损出场后同向重进冷却（`STOP_REENTRY_COOLDOWN_BARS`，默认止损所在 K 线内不重进）
+  - 仓位按 min(本金, 已实现权益) 计算，亏损平仓后自动降仓
   - 仓位占比上限（默认 30%）
   - 信号阈值检查（|signal| ≥ 0.05）
   - 信号范围校验（[-1, 1]）
@@ -484,6 +486,9 @@ ETH-USDT      训练 9000 步       离线回测        动态止损            
 | `MAX_DAILY_LOSS_PCT` | `0.10` | — | 单日最大亏损 10% |
 | `MAX_POSITION_PCT` | `0.30` | — | 单品种最大仓位占比 |
 | `MIN_REBALANCE_NOTIONAL` | `20` | `MIN_REBALANCE_NOTIONAL` | 微幅调仓过滤阈值（USDT 名义价值）：同向增减仓增量低于该值时跳过下单，省手续费；按名义价值过滤自动适配各币种 ctVal；全额平仓/新开仓/反转不受影响；`0` = 关闭 |
+| `STOP_REENTRY_COOLDOWN_BARS` | `1` | `STOP_REENTRY_COOLDOWN_BARS` | 止损出场后的同向重进冷却（K 线根数）：交易所端止损或保本/追踪止损出场后，禁止向被止损的方向开仓或加仓（减仓、平仓、反向不受影响）；`1` 表示止损所在的那根 K 线内不重进；`0` = 关闭 |
+| `SL_ANCHOR_TO_LIVE_PRICE` | `True` | `SL_ANCHOR_TO_LIVE_PRICE` | 交易所端止损单按下单瞬间的实时最新价锚定（市价单成交价与它只差滑点）；关闭则退回按上一根已收盘 K 线的收盘价 |
+| `SIZE_ON_LIVE_EQUITY` | `True` | `SIZE_ON_LIVE_EQUITY` | 仓位规模按 min(本金参数, 账户已实现权益) 计算，只缩不放：亏损平仓后自动降仓，不会因账户余额高于本金而加仓；已实现权益 = 总权益 − 未实现盈亏，持仓浮盈亏不影响目标仓位 |
 | `WEB_HOST` | `0.0.0.0` | `WEB_HOST` | Web 监听地址 |
 | `WEB_PORT` | `8009` | `WEB_PORT` | Web 监听端口 |
 
